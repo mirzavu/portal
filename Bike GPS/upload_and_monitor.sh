@@ -2,7 +2,7 @@
 # Script to upload code and capture serial output from the very beginning
 # This kills any existing serial monitor, uploads, then immediately starts monitoring
 
-PROJECT_DIR="/home/mirza/Documents/PlatformIO/Projects/Hub"
+PROJECT_DIR="/home/mirza/Documents/PlatformIO/Projects/Bike GPS"
 LOG_FILE="${1:-serial_output_$(date +%Y%m%d_%H%M%S).log}"
 
 # Extract port from platformio.ini (prefer monitor_port, fallback to upload_port)
@@ -26,7 +26,7 @@ sleep 0.5
 
 # Upload code
 echo "Uploading code..."
-pio run -t upload
+timeout 3m pio run -t upload
 
 if [ $? -eq 0 ]; then
     echo ""
