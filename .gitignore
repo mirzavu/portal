@@ -1,0 +1,79 @@
+# PlatformIO Build Artifacts
+.pio/
+*.bin
+*.elf
+compile_commands.json
+
+# Serial Output Logs
+*.log
+serial_output_*.log
+
+# Backup Files
+*.backup
+*.backup2
+*.bak
+*.nack
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Database Files (PocketBase)
+pb_data/
+*.db
+*.db-shm
+*.db-wal
+
+# PocketBase Binary
+pocketbase
+pocketbase.exe
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment Variables
+.env
+.env.local
+.env*.local
+
+# Debug / Temporary Files
+debug code
+*.tmp
+*.temp
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Package Manager Lock Files (optional - uncomment if you want to ignore)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
