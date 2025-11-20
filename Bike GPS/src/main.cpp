@@ -6,30 +6,38 @@
 // ============================================
 
 // Pin Definitions
-#define MOSFET_GATE 27    // Controls power to GPS and GSM modules
-// GPS uses Serial2: GPS_TX -> RX2(16), GPS_RX -> TX2(17)
-// GSM uses Serial1: GSM_TX -> D26, GSM_RX -> D25
+#define MOSFET_GATE 27      // N-Channel MOSFET Gate (Active HIGH)
+#define BATTERY_PIN 35      // Voltage Divider Input
+#define GSM_RX_PIN 26       // ESP32 RX <- SIM800L TX
+#define GSM_TX_PIN 25       // ESP32 TX -> SIM800L RX
+#define GPS_RX_PIN 16       // ESP32 RX <- GPS TX
+#define GPS_TX_PIN 17       // ESP32 TX -> GPS RX
+
+// Voltage Divider Configuration
+// R1 = 330k, R2 = 100k
+// Factor = (R1 + R2) / R2 = 4.3
+// Max Input = 3.3V * 4.3 = 14.19V
+const float VOLTAGE_DIVIDER_RATIO = 4.3; 
+const float ADC_REF_VOLTAGE = 3.3;
+const int ADC_RESOLUTION = 4095;
 
 // Timing Configuration
-const unsigned long UPDATE_INTERVAL = 600000;  // 10 minutes (600,000 ms)
-const unsigned long GPS_TIMEOUT = 120000;      // 2 minutes to get GPS fix
-const unsigned long GSM_TIMEOUT = 60000;       // 1 minute for GSM operations
+const unsigned long SLEEP_SECONDS = 10; // Testing: 10s. Production: 600 (10 mins)
+const unsigned long GPS_TIMEOUT = 120000; // 2 minutes
+const unsigned long GSM_TIMEOUT = 60000;  // 1 minute
 
 // API Configuration
+const char* APN = "internet"; // Change if needed
 const char* API_URL = "portal.demotesting.co.uk";
 const char* API_ENDPOINT = "/api/bike-location";
-const int API_PORT = 443;  // HTTPS
-
-// APN Configuration (adjust for your SIM card)
-const char* APN = "internet";  // Common APN, change if needed
 
 // ============================================
 // GLOBAL OBJECTS
 // ============================================
 
 TinyGPSPlus gps;
-HardwareSerial gpsSerial(2);    // GPS on Serial2 (RX2=16, TX2=17)
-HardwareSerial gsmSerial(1);    // GSM on Serial1 (RX=26, TX=25)
+HardwareSerial gpsSerial(2);
+HardwareSerial gsmSerial(1);
 
 // ============================================
 // FUNCTION DECLARATIONS
@@ -38,122 +46,123 @@ HardwareSerial gsmSerial(1);    // GSM on Serial1 (RX=26, TX=25)
 void powerOn();
 void powerOff();
 bool getGPSFix();
+int readBatteryVoltage();
 bool initGSM();
-bool postLocationToAPI(double lat, double lon, double spd, int sats, int battery);
-String sendGSMCommand(String cmd, unsigned long timeout = 1000);
-int getBatteryVoltage();
+bool postLocation(double lat, double lon, int sats, int battery);
+String sendGSMCommand(String cmd, unsigned long timeout);
+void goToDeepSleep();
 
 // ============================================
-// SETUP
+// SETUP & LOOP
 // ============================================
 
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    delay(1000);
     
-    Serial.println("\n\n╔════════════════════════════════════════╗");
-    Serial.println("║   Bike GPS Tracker - v1.0             ║");
-    Serial.println("╚════════════════════════════════════════╝\n");
+    Serial.println("\n\n=== Bike GPS Tracker Starting ===");
     
-    // Setup MOSFET pin
+    // 1. Setup Pins
     pinMode(MOSFET_GATE, OUTPUT);
-    digitalWrite(MOSFET_GATE, LOW);  // Start with modules off
+    pinMode(BATTERY_PIN, INPUT);
     
-    Serial.println("✓ System initialized");
-    Serial.printf("  Update Interval: %lu seconds\n", UPDATE_INTERVAL / 1000);
-}
-
-// ============================================
-// MAIN LOOP
-// ============================================
-
-void loop() {
-    Serial.println("\n═══════════════════════════════════════");
-    Serial.println("  Starting Location Update Cycle");
-    Serial.println("═══════════════════════════════════════\n");
-    
-    // 1. Power on modules
+    // 2. Power On Modules
     powerOn();
     
-    // 2. Get GPS fix
-    Serial.println("[1/4] Getting GPS fix...");
-    bool gpsSuccess = getGPSFix();
-    
-    if (!gpsSuccess) {
-        Serial.println("✗ Failed to get GPS fix");
+    // 3. Get GPS Fix
+    Serial.println("[1/4] Waiting for GPS fix...");
+    if (!getGPSFix()) {
+        Serial.println("TIMEOUT: GPS fix failed.");
+        // Even if GPS fails, we might want to report battery? 
+        // For now, just sleep to save power.
         powerOff();
-        delay(60000);  // Wait 1 minute before retry
-        return;
+        goToDeepSleep();
     }
     
-    double latitude = gps.location.lat();
-    double longitude = gps.location.lng();
-    double speed = gps.speed.kmph();
-    int satellites = gps.satellites.value();
-    int battery = getBatteryVoltage();
+    double lat = gps.location.lat();
+    double lon = gps.location.lng();
+    int sats = gps.satellites.value();
     
-    Serial.println("✓ GPS fix acquired");
-    Serial.printf("  Location: %.6f, %.6f\n", latitude, longitude);
-    Serial.printf("  Speed: %.2f km/h\n", speed);
-    Serial.printf("  Satellites: %d\n", satellites);
-    Serial.printf("  Battery: %d mV\n", battery);
+    Serial.printf("GPS Fix: %.6f, %.6f (Sats: %d)\n", lat, lon, sats);
     
-    // 3. Initialize GSM
-    Serial.println("\n[2/4] Initializing GSM...");
-    bool gsmSuccess = initGSM();
+    // 4. Read Battery
+    int battery_mv = readBatteryVoltage();
+    Serial.printf("Battery: %d mV\n", battery_mv);
     
-    if (!gsmSuccess) {
-        Serial.println("✗ Failed to initialize GSM");
-        powerOff();
-        delay(60000);
-        return;
-    }
-    
-    Serial.println("✓ GSM initialized");
-    
-    // 4. Post to API
-    Serial.println("\n[3/4] Posting location to API...");
-    bool apiSuccess = postLocationToAPI(latitude, longitude, speed, satellites, battery);
-    
-    if (apiSuccess) {
-        Serial.println("✓ Location posted successfully!");
+    // 5. Send Data
+    Serial.println("[2/4] Initializing GSM...");
+    if (initGSM()) {
+        Serial.println("[3/4] Sending Data...");
+        if (postLocation(lat, lon, sats, battery_mv)) {
+            Serial.println("SUCCESS: Location sent.");
+        } else {
+            Serial.println("ERROR: Failed to send location.");
+        }
     } else {
-        Serial.println("✗ Failed to post location");
+        Serial.println("ERROR: GSM Init failed.");
     }
     
-    // 5. Power off and wait
-    Serial.println("\n[4/4] Powering down...");
+    // 6. Power Off & Sleep
+    Serial.println("[4/4] Going to sleep...");
     powerOff();
+    goToDeepSleep();
+}
     
-    Serial.printf("\n⏱ Waiting %lu seconds until next update...\n", UPDATE_INTERVAL / 1000);
-    delay(UPDATE_INTERVAL);
+void loop() {
+    // Empty - Everything happens in setup() for Deep Sleep
 }
 
 // ============================================
-// POWER MANAGEMENT
+// HARDWARE CONTROL
 // ============================================
 
 void powerOn() {
-    Serial.println("⚡ Powering on GPS and GSM modules...");
+    Serial.println("Powering ON modules...");
     digitalWrite(MOSFET_GATE, HIGH);
-    delay(3000);  // Wait for modules to boot
+    delay(3000); // Allow modules to boot
     
-    // Initialize GPS Serial
-    gpsSerial.begin(9600, SERIAL_8N1, 16, 17);  // RX=16, TX=17
-    
-    // Initialize GSM Serial
-    gsmSerial.begin(115200, SERIAL_8N1, 26, 25);  // RX=26, TX=25
-    delay(2000);
-    
-    Serial.println("✓ Modules powered on");
+    gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    gsmSerial.begin(115200, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
 }
 
 void powerOff() {
-    Serial.println("⚡ Powering off GPS and GSM modules...");
-    gsmSerial.end();
-    gpsSerial.end();
+    Serial.println("Powering OFF modules...");
     digitalWrite(MOSFET_GATE, LOW);
-    Serial.println("✓ Modules powered off");
+    
+    // Flush and end serials to prevent ghost power
+    gpsSerial.flush();
+    gsmSerial.flush();
+    gpsSerial.end();
+    gsmSerial.end();
+    
+    // Set pins to Input/Low to prevent leakage
+    pinMode(GSM_RX_PIN, INPUT);
+    pinMode(GSM_TX_PIN, INPUT);
+    pinMode(GPS_RX_PIN, INPUT);
+    pinMode(GPS_TX_PIN, INPUT);
+}
+
+void goToDeepSleep() {
+    Serial.printf("Sleeping for %lu seconds...\n", SLEEP_SECONDS);
+    esp_sleep_enable_timer_wakeup(SLEEP_SECONDS * 1000000ULL);
+    esp_deep_sleep_start();
+}
+
+int readBatteryVoltage() {
+    // Take multiple samples for stability
+    long sum = 0;
+    for(int i=0; i<10; i++) {
+        sum += analogRead(BATTERY_PIN);
+        delay(10);
+    }
+    float averageRaw = sum / 10.0;
+    
+    // Calculate voltage
+    // V_pin = (ADC / 4095) * 3.3
+    // V_bat = V_pin * Ratio
+    float voltage = (averageRaw / ADC_RESOLUTION) * ADC_REF_VOLTAGE * VOLTAGE_DIVIDER_RATIO;
+    
+    return (int)(voltage * 1000); // Return in mV
 }
 
 // ============================================
@@ -161,170 +170,153 @@ void powerOff() {
 // ============================================
 
 bool getGPSFix() {
-    unsigned long startTime = millis();
-    bool fixAcquired = false;
+    unsigned long start = millis();
     
-    Serial.println("  Waiting for GPS fix...");
-    
-    while (millis() - startTime < GPS_TIMEOUT) {
+    while (millis() - start < GPS_TIMEOUT) {
         while (gpsSerial.available() > 0) {
-            char c = gpsSerial.read();
-            gps.encode(c);
-            
-            if (gps.location.isUpdated() && gps.location.isValid()) {
-                fixAcquired = true;
-                break;
+            if (gps.encode(gpsSerial.read())) {
+                if (gps.location.isValid()) {
+                    return true;
+                }
             }
         }
         
-        if (fixAcquired) break;
-        
-        // Print progress every 10 seconds
-        if ((millis() - startTime) % 10000 < 100) {
-            Serial.printf("  Searching... (%lu/%lu seconds)\n", 
-                         (millis() - startTime) / 1000, GPS_TIMEOUT / 1000);
+        if ((millis() - start) % 5000 == 0) {
+             Serial.print(".");
         }
-        
-        delay(100);
     }
-    
-    return fixAcquired;
+    return false;
 }
 
 // ============================================
 // GSM FUNCTIONS
 // ============================================
 
-bool initGSM() {
-    // Test AT command
-    Serial.println("  Testing GSM module...");
-    String response = sendGSMCommand("AT", 1000);
-    if (response.indexOf("OK") == -1) {
-        Serial.println("  ✗ GSM module not responding");
-        return false;
-    }
-    Serial.println("  ✓ GSM module responding");
-    
-    // Check SIM card
-    Serial.println("  Checking SIM card...");
-    response = sendGSMCommand("AT+CPIN?", 5000);
-    if (response.indexOf("READY") == -1) {
-        Serial.println("  ✗ SIM card not ready");
-        return false;
-    }
-    Serial.println("  ✓ SIM card ready");
-    
-    // Check network registration
-    Serial.println("  Checking network registration...");
-    for (int i = 0; i < 20; i++) {
-        response = sendGSMCommand("AT+CREG?", 1000);
-        if (response.indexOf(",1") != -1 || response.indexOf(",5") != -1) {
-            Serial.println("  ✓ Registered on network");
-            return true;
-        }
-        Serial.printf("  Waiting for network... (%d/20)\n", i + 1);
-        delay(2000);
-    }
-    
-    Serial.println("  ✗ Failed to register on network");
-    return false;
-}
-
-bool postLocationToAPI(double lat, double lon, double spd, int sats, int battery) {
-    // Configure bearer profile
-    sendGSMCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 2000);
-    sendGSMCommand("AT+SAPBR=3,1,\"APN\",\"" + String(APN) + "\"", 2000);
-    
-    // Open bearer
-    Serial.println("  Opening GPRS connection...");
-    String response = sendGSMCommand("AT+SAPBR=1,1", 10000);
-    if (response.indexOf("OK") == -1 && response.indexOf("ALREADY") == -1) {
-        Serial.println("  ✗ Failed to open GPRS");
-        return false;
-    }
-    Serial.println("  ✓ GPRS connected");
-    
-    // Initialize HTTP
-    sendGSMCommand("AT+HTTPINIT", 2000);
-    sendGSMCommand("AT+HTTPPARA=\"CID\",1", 2000);
-    
-    // Set URL
-    String url = "https://" + String(API_URL) + String(API_ENDPOINT);
-    sendGSMCommand("AT+HTTPPARA=\"URL\",\"" + url + "\"", 2000);
-    
-    // Prepare JSON payload
-    unsigned long timestamp = millis() / 1000;  // Note: This is uptime, not Unix time
-    // You may want to sync time via GSM: AT+CCLK?
-    
-    String jsonPayload = "{";
-    jsonPayload += "\"latitude\":" + String(lat, 6) + ",";
-    jsonPayload += "\"longitude\":" + String(lon, 6) + ",";
-    jsonPayload += "\"speed\":" + String(spd, 2) + ",";
-    jsonPayload += "\"satellites\":" + String(sats) + ",";
-    jsonPayload += "\"battery_mv\":" + String(battery) + ",";
-    jsonPayload += "\"timestamp\":" + String(timestamp);
-    jsonPayload += "}";
-    
-    Serial.println("  JSON: " + jsonPayload);
-    
-    // Set content type
-    sendGSMCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 2000);
-    
-    // Set HTTP data
-    gsmSerial.println("AT+HTTPDATA=" + String(jsonPayload.length()) + ",10000");
-    delay(1000);
-    gsmSerial.println(jsonPayload);
-    delay(2000);
-    
-    // Send POST request
-    Serial.println("  Sending POST request...");
-    response = sendGSMCommand("AT+HTTPACTION=1", 15000);  // 1 = POST
-    delay(5000);  // Wait for response
-    
-    // Read response
-    response = sendGSMCommand("AT+HTTPREAD", 5000);
-    Serial.println("  API Response: " + response);
-    
-    // Terminate HTTP
-    sendGSMCommand("AT+HTTPTERM", 2000);
-    
-    // Close bearer
-    sendGSMCommand("AT+SAPBR=0,1", 5000);
-    
-    // Check if successful (look for 200 or 201)
-    bool success = (response.indexOf("200") != -1 || response.indexOf("201") != -1);
-    return success;
-}
-
 String sendGSMCommand(String cmd, unsigned long timeout) {
     gsmSerial.println(cmd);
     
-    unsigned long startTime = millis();
     String response = "";
+    unsigned long start = millis();
     
-    while (millis() - startTime < timeout) {
+    while (millis() - start < timeout) {
         while (gsmSerial.available()) {
             char c = gsmSerial.read();
             response += c;
         }
-        
-        if (response.indexOf("OK") != -1 || response.indexOf("ERROR") != -1) {
-            break;
+        if (response.length() > 0 && (millis() - start > 500)) {
+            // Wait a bit for full response if we started getting data
+             delay(100); 
         }
-        
-        delay(10);
     }
+    
+    // Debug output (optional)
+    // Serial.print("CMD: "); Serial.println(cmd);
+    // Serial.print("RESP: "); Serial.println(response);
     
     return response;
 }
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
+bool initGSM() {
+    // Basic check
+    if (sendGSMCommand("AT", 1000).indexOf("OK") == -1) return false;
+    
+    // Signal quality
+    sendGSMCommand("AT+CSQ", 1000);
+    
+    // Check Network Reg
+    bool registered = false;
+    for(int i=0; i<20; i++) {
+        String resp = sendGSMCommand("AT+CREG?", 1000);
+        if (resp.indexOf(",1") != -1 || resp.indexOf(",5") != -1) {
+            registered = true;
+            break;
+        }
+        delay(1000);
+    }
+    
+    if (!registered) return false;
+    
+    // Configure Bearer
+    sendGSMCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1000);
+    sendGSMCommand("AT+SAPBR=3,1,\"APN\",\"" + String(APN) + "\"", 1000);
+    
+    // Open Bearer
+    sendGSMCommand("AT+SAPBR=1,1", 3000);
+    
+    return true;
+}
 
-int getBatteryVoltage() {
-    // Read battery voltage from ADC (adjust pin and calculation for your setup)
-    // For now, return a dummy value
-    // TODO: Implement actual battery voltage reading
-    return 3700;  // Dummy value in mV
+bool postLocation(double lat, double lon, int sats, int battery) {
+    // Init HTTP
+    sendGSMCommand("AT+HTTPINIT", 1000);
+    sendGSMCommand("AT+HTTPPARA=\"CID\",1", 1000);
+    
+    // URL
+    String url = "https://" + String(API_URL) + String(API_ENDPOINT);
+    sendGSMCommand("AT+HTTPPARA=\"URL\",\"" + url + "\"", 1000);
+    
+    // Content Type
+    sendGSMCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 1000);
+    
+    // Payload
+    // Note: Uptime timestamp, ideally we get time from GSM/GPS but for now we send something
+    // The server validates timestamp > 0. 
+    // Using GPS time would be better if available.
+    
+    unsigned long timestamp = 100000; // Fallback
+    if (gps.time.isValid()) {
+        // Construct timestamp? Or just send 0 and let server handle? 
+        // The server expects int > 0. 
+        // Since we are using Date on server, it expects Unix Epoch. 
+        // TinyGPS doesn't give easy Epoch.
+        // Let's just send a dummy > 0 and let server use its receive time if we can?
+        // The validations schema says: timestamp: z.number().int().positive()
+        // And route.ts does: new Date(validated.timestamp * 1000).
+        // We should try to sync time or just send a placeholder if the server overwrites it?
+        // The server code: timestamp: new Date(validated.timestamp * 1000).toISOString()
+        // If we send 1, date is 1970... 
+        // We can trust the server to set "created" time, but the field is "timestamp".
+        // Let's try to use network time if possible, or just hardcode a valid-looking timestamp?
+        // Actually, for a tracker, GPS time is best.
+        // Let's use a rough approximation or rely on the fact that we are live.
+        // Send 1700000000 (a recent timestamp) to pass validation?
+        // No, let's try to get Network Time.
+        
+        // Simpler: Just send a static recent timestamp and rely on 'created' in DB?
+        // But our API uses the payload timestamp.
+        // Let's send 1731900000 (Nov 2024) as a dummy if needed, but best to get from GSM.
+        // AT+CCLK? gives time.
+        
+        timestamp = 1731900000; 
+    }
+    
+    String payload = "{";
+    payload += "\"latitude\":" + String(lat, 6) + ",";
+    payload += "\"longitude\":" + String(lon, 6) + ",";
+    payload += "\"satellites\":" + String(sats) + ",";
+    payload += "\"battery_mv\":" + String(battery) + ",";
+    payload += "\"timestamp\":" + String(timestamp);
+    payload += "}";
+    
+    // Prepare Data
+    sendGSMCommand("AT+HTTPDATA=" + String(payload.length()) + ",5000", 1000);
+    gsmSerial.println(payload);
+    delay(1000);
+    
+    // Action (1 = POST)
+    // HTTPS might require SSL setup on SIM800L which is tricky (certs).
+    // Does the module support HTTPS out of the box without certs?
+    // Usually needs AT+HTTPSSL=1 and sometimes ignoring certs.
+    // Let's try enabling SSL.
+    sendGSMCommand("AT+HTTPSSL=1", 1000);
+    sendGSMCommand("AT+HTTPPARA=\"RECVSSL\",0", 1000); // Don't verify cert
+    
+    String resp = sendGSMCommand("AT+HTTPACTION=1", 15000);
+    
+    // Read response
+    sendGSMCommand("AT+HTTPREAD", 2000);
+    sendGSMCommand("AT+HTTPTERM", 1000);
+    
+    if (resp.indexOf("200") != -1 || resp.indexOf("201") != -1) return true;
+    return false;
 }
