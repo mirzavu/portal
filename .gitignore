@@ -73,6 +73,9 @@ debug code
 ehthumbs.db
 Thumbs.db
 
+# Playwright MCP
+.playwright-mcp/
+
 *.md
 
 # Package Manager Lock Files (optional - uncomment if you want to ignore)
