@@ -37,7 +37,7 @@ if [ $? -eq 0 ]; then
     
     # Use script to wrap picocom, forcing a TTY allocation
     # pipe tail -f /dev/null to keep picocom stdin open so it doesn't exit
-    timeout 20 script -f -q -c "tail -f /dev/null | picocom -b $BAUD $PORT" "$LOG_FILE" || true
+    timeout 300 script -f -q -c "tail -f /dev/null | picocom -b $BAUD $PORT" "$LOG_FILE" || true
     
     echo ""
     echo "Capture complete. Log saved to: $LOG_FILE"
