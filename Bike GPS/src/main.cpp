@@ -1,10 +1,13 @@
 #include <Arduino.h>
 #include <TinyGPSPlus.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 
 // ==========================================
 //       USER CONFIGURATION
 // ==========================================
-const char* APN = "internet";                  
+const char* WIFI_SSID = "TheBoss";
+const char* WIFI_PASSWORD = "12121234";
 const char* API_URL = "http://portal.demotesting.co.uk/api/bike-location";
 const char* DEBUG_API_URL = "http://portal.demotesting.co.uk/api/device-debug";
 const unsigned long UPLOAD_INTERVAL = 10000;
@@ -14,8 +17,6 @@ const unsigned long SERIAL_LOG_UPLOAD_INTERVAL = 50000; // Upload serial logs ev
 //       PIN DEFINITIONS
 // ==========================================
 #define MOSFET_GATE 27
-#define GSM_RX_PIN 25       
-#define GSM_TX_PIN 26       
 #define GPS_RX_PIN 16       
 #define GPS_TX_PIN 17       
 #define BATTERY_PIN 35      
@@ -24,7 +25,6 @@ const float VOLTAGE_DIVIDER_RATIO = 4.3;
 const float ADC_REF_VOLTAGE = 3.3;
 const int ADC_RESOLUTION = 4095;
 
-HardwareSerial gsmSerial(1);
 HardwareSerial gpsSerial(2);
 TinyGPSPlus gps;
 
@@ -77,83 +77,42 @@ void logStep(String stepName) {
     stepStart = millis(); // Reset for next step
 }
 
-String sendAT(String cmd, unsigned long timeout, bool debug = false) {
-    while(gsmSerial.available()) gsmSerial.read(); 
-    gsmSerial.println(cmd);
-    if(debug) { logPrint("CMD: "); logPrintln(cmd); }
-    
-    String resp = "";
-    unsigned long start = millis();
-    while (millis() - start < timeout) {
-        while (gsmSerial.available()) {
-            char c = gsmSerial.read();
-            resp += c;
-        }
-    }
-    if(debug) { logPrint("RESP: "); logPrintln(resp); }
-    return resp;
-}
-
-void checkSignal() {
+bool connectToWiFi() {
     markStep();
-    String resp = sendAT("AT+CSQ", 2000);
-    if (resp.indexOf("+CSQ:") != -1) {
-        logPrint("[SIGNAL] "); logPrintln(resp.substring(resp.indexOf("+CSQ:")));
-    }
-    logStep("Signal Check");
-}
-
-// NEW: Super Nuclear Reset (Flight Mode Toggle)
-void forceNetworkReset() {
-    logPrintln("[GSM] ⚠️ Performing NETWORK RESET (Flight Mode Toggle)...");
-    sendAT("AT+CFUN=0", 5000); // Flight Mode ON (Radio OFF)
-    delay(2000);
-    sendAT("AT+CFUN=1", 5000); // Flight Mode OFF (Radio ON)
-    delay(5000); // Wait for network search
+    logPrintln("[WiFi] Connecting to " + String(WIFI_SSID) + "...");
     
-    // Wait for registration
-    int retries = 0;
-    while(retries < 20) {
-        String creg = sendAT("AT+CREG?", 1000);
-        if(creg.indexOf(",1") != -1 || creg.indexOf(",5") != -1) {
-            logPrintln("[GSM] Re-registered to Network!");
-            return;
-        }
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        delay(500);
         logPrint(".");
-        delay(1000);
-        retries++;
+        attempts++;
     }
-    logPrintln("[GSM] Warning: Registration timed out.");
-}
-
-bool initGPRS() {
-    markStep();
-    logPrintln("[GPRS] Resetting IP Stack...");
-    sendAT("AT+CIPSHUT", 2000); 
-    sendAT("AT+SAPBR=0,1", 2000); 
-    logStep("IP Stack Reset");
-
-    logPrintln("[GPRS] Configuring...");
-    sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1000);
-    sendAT("AT+SAPBR=3,1,\"APN\",\"" + String(APN) + "\"", 1000);
-    sendAT("AT+CDNSCFG=\"8.8.8.8\",\"8.8.4.4\"", 1000); 
-    logStep("APN Config");
+    logPrintln("");
     
-    logPrintln("[GPRS] Opening bearer...");
-    if(sendAT("AT+SAPBR=1,1", 15000).indexOf("OK") == -1) { 
-        logStep("Open Bearer (FAILED)");
-        logPrintln("[GPRS] ❌ Bearer Open Failed");
-        forceNetworkReset();
+    if (WiFi.status() == WL_CONNECTED) {
+        logPrint("[WiFi] Connected! IP: ");
+        logPrintln(WiFi.localIP().toString());
+        logPrint("[WiFi] RSSI: ");
+        logPrint(String(WiFi.RSSI()));
+        logPrintln(" dBm");
+        logStep("WiFi Connect");
+        return true;
+    } else {
+        logPrintln("[WiFi] ❌ Connection failed!");
+        logStep("WiFi Connect (FAILED)");
         return false;
     }
-    logStep("Open Bearer (SUCCESS)");
-    
-    String resp = sendAT("AT+SAPBR=2,1", 2000);
-    if (resp.indexOf("\"0.0.0.0\"") == -1 && resp.indexOf("\"") != -1) {
-        logPrintln("[GPRS] ✅ Connected! IP Obtained.");
-        return true;
+}
+
+bool checkWiFi() {
+    if (WiFi.status() != WL_CONNECTED) {
+        logPrintln("[WiFi] Connection lost. Reconnecting...");
+        return connectToWiFi();
     }
-    return false;
+    return true;
 }
 
 unsigned long toUnixTime(TinyGPSDate &d, TinyGPSTime &t) {
@@ -189,17 +148,13 @@ void uploadLocation() {
     unsigned long cycleStart = millis();
     logPrintln("\n=== UPLOAD START ===");
     
-    checkSignal();
-
-    // Check GPRS status
+    // Check WiFi connection
     markStep();
-    if (sendAT("AT+SAPBR=2,1", 2000).indexOf("\"0.0.0.0\"") != -1) {
-        logStep("Check IP (Failed - Reconnecting)");
-        logPrintln("[UPLOAD] GPRS dropped. Reconnecting...");
-        if(!initGPRS()) return;
-    } else {
-        logStep("Check IP (Success - Reuse)");
+    if (!checkWiFi()) {
+        logStep("WiFi Check (FAILED)");
+        return;
     }
+    logStep("WiFi Check (OK)");
 
     float lat = gps.location.lat();
     float lon = gps.location.lng();
@@ -218,46 +173,33 @@ void uploadLocation() {
     
     logPrintln("Payload: " + payload);
 
-    // Clean HTTP session
+    // HTTP POST
     markStep();
-    sendAT("AT+HTTPTERM", 1000); 
-    delay(100);
+    HTTPClient http;
+    http.begin(API_URL);
+    http.addHeader("Content-Type", "application/json");
     
-    if (sendAT("AT+HTTPINIT", 2000).indexOf("OK") == -1) {
-        logPrintln("HTTPINIT Failed - trying Hard Recover");
-        sendAT("AT+CIPSHUT", 1000); // Soft reset IP
-        return;
-    }
-    logStep("HTTP Init");
+    int httpCode = http.POST(payload);
+    logStep("HTTP POST");
     
-    markStep();
-    sendAT("AT+HTTPPARA=\"CID\",1", 2000);
-    sendAT("AT+HTTPPARA=\"URL\",\"" + String(API_URL) + "\"", 2000);
-    sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 2000);
-    logStep("HTTP Params");
-    
-    String cmd = "AT+HTTPDATA=" + String(payload.length()) + ",10000";
-    if (sendAT(cmd, 3000).indexOf("DOWNLOAD") != -1) {
-        sendAT(payload, 3000);
-        
-        logPrintln("[UPLOAD] POSTing...");
-        markStep();
-        // Increased timeout for poor BSNL 2G
-        String resp = sendAT("AT+HTTPACTION=1", 40000, true); 
-        logStep("Server Wait (HTTPACTION)");
-        
-        if (resp.indexOf(",200") != -1 || resp.indexOf(",201") != -1) {
-            logPrintln("✅ SUCCESS!");
+    if (httpCode > 0) {
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
+            logPrintln("✅ SUCCESS! HTTP " + String(httpCode));
+            String response = http.getString();
+            if (response.length() > 0) {
+                logPrintln("Response: " + response);
+            }
         } else {
-             logPrint("❌ FAIL. Full Resp: "); logPrintln(resp);
-             // If DNS error (601), force a network reset next time
-             if(resp.indexOf("601") != -1) {
-                 logPrintln("[UPLOAD] DNS Error detected. Scheduling Network Reset.");
-                 sendAT("AT+SAPBR=0,1", 1000);
-             }
+            logPrint("❌ FAIL. HTTP Code: ");
+            logPrintln(String(httpCode));
+            logPrintln("Response: " + http.getString());
         }
+    } else {
+        logPrint("❌ FAIL. Error: ");
+        logPrintln(http.errorToString(httpCode));
     }
-    sendAT("AT+HTTPTERM", 2000);
+    
+    http.end();
     
     logPrint("[TIMING] Total Cycle: ");
     logPrint(String((millis() - cycleStart) / 1000));
@@ -272,15 +214,13 @@ void uploadSerialLog() {
     unsigned long cycleStart = millis();
     logPrintln("\n=== SERIAL LOG UPLOAD START ===");
     
-    // Check GPRS status
+    // Check WiFi connection
     markStep();
-    if (sendAT("AT+SAPBR=2,1", 2000).indexOf("\"0.0.0.0\"") != -1) {
-        logStep("Check IP (Failed - Reconnecting)");
-        logPrintln("[SERIAL_LOG] GPRS dropped. Reconnecting...");
-        if(!initGPRS()) return;
-    } else {
-        logStep("Check IP (Success - Reuse)");
+    if (!checkWiFi()) {
+        logStep("WiFi Check (FAILED)");
+        return;
     }
+    logStep("WiFi Check (OK)");
 
     // Create payload with serial log
     unsigned long timestamp = toUnixTime(gps.date, gps.time);
@@ -300,35 +240,18 @@ void uploadSerialLog() {
     
     logPrint("Serial log size: "); logPrint(String(serialBuffer.length())); logPrintln(" bytes");
 
-    // Clean HTTP session
+    // HTTP POST
     markStep();
-    sendAT("AT+HTTPTERM", 1000); 
-    delay(100);
+    HTTPClient http;
+    http.begin(DEBUG_API_URL);
+    http.addHeader("Content-Type", "application/json");
     
-    if (sendAT("AT+HTTPINIT", 2000).indexOf("OK") == -1) {
-        logPrintln("HTTPINIT Failed - trying Hard Recover");
-        sendAT("AT+CIPSHUT", 1000);
-        return;
-    }
-    logStep("HTTP Init");
+    int httpCode = http.POST(payload);
+    logStep("HTTP POST");
     
-    markStep();
-    sendAT("AT+HTTPPARA=\"CID\",1", 2000);
-    sendAT("AT+HTTPPARA=\"URL\",\"" + String(DEBUG_API_URL) + "\"", 2000);
-    sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 2000);
-    logStep("HTTP Params");
-    
-    String cmd = "AT+HTTPDATA=" + String(payload.length()) + ",10000";
-    if (sendAT(cmd, 3000).indexOf("DOWNLOAD") != -1) {
-        sendAT(payload, 3000);
-        
-        logPrintln("[SERIAL_LOG] POSTing...");
-        markStep();
-        String resp = sendAT("AT+HTTPACTION=1", 40000, true); 
-        logStep("Server Wait (HTTPACTION)");
-        
-        if (resp.indexOf(",200") != -1 || resp.indexOf(",201") != -1) {
-            logPrintln("✅ SERIAL LOG UPLOAD SUCCESS!");
+    if (httpCode > 0) {
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
+            logPrintln("✅ SERIAL LOG UPLOAD SUCCESS! HTTP " + String(httpCode));
             // Clear buffer after successful upload (keep last 1KB for continuity)
             if (serialBuffer.length() > 1024) {
                 serialBuffer = serialBuffer.substring(serialBuffer.length() - 1024);
@@ -336,10 +259,16 @@ void uploadSerialLog() {
                 serialBuffer = "";
             }
         } else {
-             logPrint("❌ SERIAL LOG UPLOAD FAIL. Full Resp: "); logPrintln(resp);
+            logPrint("❌ SERIAL LOG UPLOAD FAIL. HTTP Code: ");
+            logPrintln(String(httpCode));
+            logPrintln("Response: " + http.getString());
         }
+    } else {
+        logPrint("❌ SERIAL LOG UPLOAD FAIL. Error: ");
+        logPrintln(http.errorToString(httpCode));
     }
-    sendAT("AT+HTTPTERM", 2000);
+    
+    http.end();
     
     logPrint("[TIMING] Serial Log Upload Cycle: ");
     logPrint(String((millis() - cycleStart) / 1000));
@@ -353,28 +282,19 @@ void setup() {
     // Enable serial buffer after Serial.begin
     serialBufferEnabled = true;
     serialBuffer = "";
-    logPrintln("=== GPS TRACKER TIMED (OPTIMIZED) ===");
+    logPrintln("=== GPS TRACKER (WiFi) ===");
 
     pinMode(MOSFET_GATE, OUTPUT);
     digitalWrite(MOSFET_GATE, HIGH);
     delay(15000);
 
-    gsmSerial.begin(9600, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
     gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
     
     gpsSerial.println("$PMTK220,1000*1F"); 
     gpsSerial.println("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"); 
     
-    // Wait for GSM
-    int retry = 0;
-    while (sendAT("AT", 1000).indexOf("OK") == -1) {
-        logPrintln("Waiting for GSM...");
-        retry++;
-        if(retry > 5) break;
-        delay(2000);
-    }
-    
-    initGPRS();
+    // Connect to WiFi
+    connectToWiFi();
 }
 
 void loop() {
