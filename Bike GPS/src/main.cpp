@@ -1,320 +1,254 @@
 #include <Arduino.h>
-#include <TinyGPSPlus.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
+#include "soc/soc.h"             // Required for brownout fix
+#include "soc/rtc_cntl_reg.h"    // Required for brownout fix
 
 // ==========================================
 //       USER CONFIGURATION
 // ==========================================
-const char* WIFI_SSID = "TheBoss";
-const char* WIFI_PASSWORD = "12121234";
-const char* API_URL = "http://portal.demotesting.co.uk/api/bike-location";
+const char* APN = "giffgaff.com"; // Changing to giffgaff to test specific APN
+const char* LOCATION_API_URL = "http://portal.demotesting.co.uk/api/bike-location";
 const char* DEBUG_API_URL = "http://portal.demotesting.co.uk/api/device-debug";
-const unsigned long UPLOAD_INTERVAL = 10000;
-const unsigned long SERIAL_LOG_UPLOAD_INTERVAL = 50000; // Upload serial logs every 50 seconds  
 
 // ==========================================
 //       PIN DEFINITIONS
 // ==========================================
 #define MOSFET_GATE 27
-#define GPS_RX_PIN 16       
-#define GPS_TX_PIN 17       
-#define BATTERY_PIN 35      
+#define GSM_RX_PIN 25       
+#define GSM_TX_PIN 26       
+#define BATTERY_PIN 35
+#define LED_PIN 2           // Onboard LED for status
 
 const float VOLTAGE_DIVIDER_RATIO = 4.3; 
 const float ADC_REF_VOLTAGE = 3.3;
 const int ADC_RESOLUTION = 4095;
 
-HardwareSerial gpsSerial(2);
-TinyGPSPlus gps;
-
-unsigned long lastUploadTime = 0;
-unsigned long lastSerialLogUploadTime = 0;
-unsigned long stepStart = 0; // Timer variable
-
-// Serial output buffer
-const size_t SERIAL_BUFFER_SIZE = 16384; // 16KB buffer
-String serialBuffer = "";
-bool serialBufferEnabled = false;
+HardwareSerial gsmSerial(1);
 
 // ==========================================
-//       HELPER FUNCTIONS
+//       LED STATUS HELPERS
 // ==========================================
+void blink(int times, int durationMs) {
+    for(int i=0; i<times; i++) {
+        digitalWrite(LED_PIN, HIGH);
+        delay(durationMs);
+        digitalWrite(LED_PIN, LOW);
+        if (times > 1) delay(durationMs);
+    }
+}
 
-// Serial logging functions that buffer output
-void logPrint(String text) {
-    Serial.print(text);
-    if (serialBufferEnabled) {
-        // Circular buffer: if too large, keep only the most recent data
-        if (serialBuffer.length() + text.length() > SERIAL_BUFFER_SIZE) {
-            // Remove oldest data to make room
-            size_t removeSize = text.length() + 1000; // Remove a bit extra for safety
-            if (removeSize > serialBuffer.length()) {
-                serialBuffer = "";
-            } else {
-                serialBuffer = serialBuffer.substring(removeSize);
-            }
+void signalSOS() {
+    // S O S pattern
+    for(int i=0; i<3; i++) { digitalWrite(LED_PIN, HIGH); delay(100); digitalWrite(LED_PIN, LOW); delay(100); }
+    delay(300);
+    for(int i=0; i<3; i++) { digitalWrite(LED_PIN, HIGH); delay(400); digitalWrite(LED_PIN, LOW); delay(200); }
+    delay(300);
+    for(int i=0; i<3; i++) { digitalWrite(LED_PIN, HIGH); delay(100); digitalWrite(LED_PIN, LOW); delay(100); }
+    delay(1000);
+}
+
+// ==========================================
+//       GSM FUNCTIONS
+// ==========================================
+String sendAT(String cmd, unsigned long timeout) {
+    while(gsmSerial.available()) gsmSerial.read(); // Clear buffer
+    gsmSerial.println(cmd);
+    
+    // Echo to USB Serial for debugging if connected, but rely on LED mainly
+    Serial.println("CMD: " + cmd);
+    
+    String resp = "";
+    unsigned long start = millis();
+    while (millis() - start < timeout) {
+        while (gsmSerial.available()) {
+            char c = gsmSerial.read();
+            resp += c;
         }
-        serialBuffer += text;
     }
+    Serial.println("RESP: " + resp);
+    return resp;
 }
 
-void logPrintln(String text = "") {
-    logPrint(text + "\n");
-}
-
-void markStep() {
-    stepStart = millis();
-}
-
-void logStep(String stepName) {
-    unsigned long duration = millis() - stepStart;
-    logPrint("[TIME] ");
-    logPrint(stepName);
-    logPrint(": ");
-    logPrint(String(duration));
-    logPrintln(" ms");
-    stepStart = millis(); // Reset for next step
-}
-
-bool connectToWiFi() {
-    markStep();
-    logPrintln("[WiFi] Connecting to " + String(WIFI_SSID) + "...");
+bool initGPRS() {
+    // Blink slow while initializing
+    blink(1, 500);
     
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    sendAT("AT+CIPSHUT", 2000); 
+    sendAT("AT+SAPBR=0,1", 2000); 
+    sendAT("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", 1000);
+    sendAT("AT+SAPBR=3,1,\"APN\",\"" + String(APN) + "\"", 1000);
     
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-        delay(500);
-        logPrint(".");
-        attempts++;
+    // Try to open bearer
+    String resp = sendAT("AT+SAPBR=1,1", 10000);
+    if(resp.indexOf("OK") == -1 && resp.indexOf("ERROR") == -1) {
+        // Sometimes it times out but works, check status
     }
-    logPrintln("");
     
-    if (WiFi.status() == WL_CONNECTED) {
-        logPrint("[WiFi] Connected! IP: ");
-        logPrintln(WiFi.localIP().toString());
-        logPrint("[WiFi] RSSI: ");
-        logPrint(String(WiFi.RSSI()));
-        logPrintln(" dBm");
-        logStep("WiFi Connect");
-        return true;
-    } else {
-        logPrintln("[WiFi] ❌ Connection failed!");
-        logStep("WiFi Connect (FAILED)");
+    // Verify IP
+    if (sendAT("AT+SAPBR=2,1", 2000).indexOf("\"0.0.0.0\"") != -1) {
         return false;
-    }
-}
-
-bool checkWiFi() {
-    if (WiFi.status() != WL_CONNECTED) {
-        logPrintln("[WiFi] Connection lost. Reconnecting...");
-        return connectToWiFi();
     }
     return true;
 }
 
-unsigned long toUnixTime(TinyGPSDate &d, TinyGPSTime &t) {
-    if (!d.isValid() || !t.isValid()) return 0;
-    int y = d.year(); int m = d.month(); int day = d.day();
-    int h = t.hour(); int min = t.minute(); int s = t.second();
-    const int daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    long days = 0;
-    for (int i = 1970; i < y; i++) {
-        days += 365;
-        if ((i % 4 == 0 && i % 100 != 0) || (i % 400 == 0)) days++;
-    }
-    for (int i = 1; i < m; i++) {
-        days += daysInMonth[i-1];
-        if (i == 2 && ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0))) days++;
-    }
-    days += day - 1;
-    return ((days * 24L + h) * 60 + min) * 60 + s;
-}
-
 int getBatteryMV() {
     long sum = 0;
-    for(int i = 0; i < 10; i++) {
-        sum += analogRead(BATTERY_PIN);
-        delay(2);
-    }
+    for(int i = 0; i < 10; i++) { sum += analogRead(BATTERY_PIN); delay(2); }
     float avg = sum / 10.0;
-    float voltage = (avg / ADC_RESOLUTION) * ADC_REF_VOLTAGE * VOLTAGE_DIVIDER_RATIO;
-    return (int)(voltage * 1000);
+    return (int)((avg / ADC_RESOLUTION) * ADC_REF_VOLTAGE * VOLTAGE_DIVIDER_RATIO * 1000);
 }
 
-void uploadLocation() {
-    unsigned long cycleStart = millis();
-    logPrintln("\n=== UPLOAD START ===");
-    
-    // Check WiFi connection
-    markStep();
-    if (!checkWiFi()) {
-        logStep("WiFi Check (FAILED)");
-        return;
+int getCSQ() {
+    String resp = sendAT("AT+CSQ", 2000);
+    // Parse +CSQ: 20,0
+    int idx = resp.indexOf("+CSQ: ");
+    if (idx != -1) {
+        String val = resp.substring(idx + 6);
+        int comma = val.indexOf(",");
+        if (comma != -1) {
+            return val.substring(0, comma).toInt();
+        }
     }
-    logStep("WiFi Check (OK)");
+    return 0;
+}
 
-    float lat = gps.location.lat();
-    float lon = gps.location.lng();
-    int sats = gps.satellites.value();
-    int bat = getBatteryMV();
-    unsigned long timestamp = toUnixTime(gps.date, gps.time);
-    if (timestamp == 0) timestamp = 1700000000 + (millis()/1000);
-
-    String payload = "{";
-    payload += "\"latitude\":" + String(lat, 6) + ",";
-    payload += "\"longitude\":" + String(lon, 6) + ",";
-    payload += "\"satellites\":" + String(sats) + ",";
-    payload += "\"battery_mv\":" + String(bat) + ",";
-    payload += "\"timestamp\":" + String(timestamp);
-    payload += "}";
+void postData(String url, String payload) {
+    // Fast blink indicating transmission start
+    blink(5, 50);
     
-    logPrintln("Payload: " + payload);
-
-    // HTTP POST
-    markStep();
-    HTTPClient http;
-    http.begin(API_URL);
-    http.addHeader("Content-Type", "application/json");
+    // Ensure clean state
+    sendAT("AT+HTTPTERM", 500); delay(100);
     
-    int httpCode = http.POST(payload);
-    logStep("HTTP POST");
+    sendAT("AT+HTTPINIT", 2000);
+    sendAT("AT+HTTPPARA=\"CID\",1", 2000);
+    sendAT("AT+HTTPPARA=\"URL\",\"" + url + "\"", 2000);
+    sendAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"", 2000);
     
-    if (httpCode > 0) {
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-            logPrintln("✅ SUCCESS! HTTP " + String(httpCode));
-            String response = http.getString();
-            if (response.length() > 0) {
-                logPrintln("Response: " + response);
+    // Prepare for data
+    String cmd = "AT+HTTPDATA=" + String(payload.length()) + ",10000";
+    
+    // Send command and wait specifically for DOWNLOAD
+    while(gsmSerial.available()) gsmSerial.read(); // Clear buffer
+    gsmSerial.println(cmd);
+    Serial.println("CMD: " + cmd);
+    
+    bool readyToUpload = false;
+    unsigned long start = millis();
+    String accumulatedResponse = "";
+    while(millis() - start < 10000) { // Increased to 10s wait for DOWNLOAD
+        if(gsmSerial.available()) {
+            char c = gsmSerial.read();
+            accumulatedResponse += c;
+            if(accumulatedResponse.indexOf("DOWNLOAD") != -1) {
+                readyToUpload = true;
+                break;
             }
+        }
+    }
+    Serial.println("RESP: " + accumulatedResponse); // See what it actually said
+
+    if (readyToUpload) {
+        // Send the actual JSON payload
+        gsmSerial.print(payload);
+        Serial.println("\n[PAYLOAD SENT]");
+        
+        // Wait for OK after payload
+        delay(500); 
+        
+        // Action 1 = POST
+        String resp = sendAT("AT+HTTPACTION=1", 30000); // Increase timeout for GPRS
+        
+        // Check for 200 or 201 status code
+        if (resp.indexOf(",200") != -1 || resp.indexOf(",201") != -1) {
+            // SUCCESS: Solid ON for 10 seconds
+            digitalWrite(LED_PIN, HIGH);
+            delay(10000); 
+            digitalWrite(LED_PIN, LOW);
+            Serial.println("UPLOAD SUCCESS");
         } else {
-            logPrint("❌ FAIL. HTTP Code: ");
-            logPrintln(String(httpCode));
-            logPrintln("Response: " + http.getString());
+            // FAIL: Long blink
+            digitalWrite(LED_PIN, HIGH); delay(2000); digitalWrite(LED_PIN, LOW);
+            Serial.println("UPLOAD FAILED: " + resp);
         }
     } else {
-        logPrint("❌ FAIL. Error: ");
-        logPrintln(http.errorToString(httpCode));
+        Serial.println("HTTPDATA ERROR: No DOWNLOAD prompt");
+        // Force terminate to reset state
+        sendAT("AT+HTTPTERM", 2000);
     }
-    
-    http.end();
-    
-    logPrint("[TIMING] Total Cycle: ");
-    logPrint(String((millis() - cycleStart) / 1000));
-    logPrintln(" s");
 }
 
-void uploadSerialLog() {
-    if (serialBuffer.length() == 0) {
-        return; // Nothing to upload
-    }
-    
-    unsigned long cycleStart = millis();
-    logPrintln("\n=== SERIAL LOG UPLOAD START ===");
-    
-    // Check WiFi connection
-    markStep();
-    if (!checkWiFi()) {
-        logStep("WiFi Check (FAILED)");
-        return;
-    }
-    logStep("WiFi Check (OK)");
-
-    // Create payload with serial log
-    unsigned long timestamp = toUnixTime(gps.date, gps.time);
-    if (timestamp == 0) timestamp = 1700000000 + (millis()/1000);
-    
-    // Escape JSON string (replace " with \", \ with \\, newlines with \n)
-    String escapedLog = serialBuffer;
-    escapedLog.replace("\\", "\\\\");
-    escapedLog.replace("\"", "\\\"");
-    escapedLog.replace("\n", "\\n");
-    escapedLog.replace("\r", "\\r");
-    
-    String payload = "{";
-    payload += "\"serial_log\":\"" + escapedLog + "\",";
-    payload += "\"timestamp\":" + String(timestamp);
-    payload += "}";
-    
-    logPrint("Serial log size: "); logPrint(String(serialBuffer.length())); logPrintln(" bytes");
-
-    // HTTP POST
-    markStep();
-    HTTPClient http;
-    http.begin(DEBUG_API_URL);
-    http.addHeader("Content-Type", "application/json");
-    
-    int httpCode = http.POST(payload);
-    logStep("HTTP POST");
-    
-    if (httpCode > 0) {
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-            logPrintln("✅ SERIAL LOG UPLOAD SUCCESS! HTTP " + String(httpCode));
-            // Clear buffer after successful upload (keep last 1KB for continuity)
-            if (serialBuffer.length() > 1024) {
-                serialBuffer = serialBuffer.substring(serialBuffer.length() - 1024);
-            } else {
-                serialBuffer = "";
-            }
-        } else {
-            logPrint("❌ SERIAL LOG UPLOAD FAIL. HTTP Code: ");
-            logPrintln(String(httpCode));
-            logPrintln("Response: " + http.getString());
-        }
-    } else {
-        logPrint("❌ SERIAL LOG UPLOAD FAIL. Error: ");
-        logPrintln(http.errorToString(httpCode));
-    }
-    
-    http.end();
-    
-    logPrint("[TIMING] Serial Log Upload Cycle: ");
-    logPrint(String((millis() - cycleStart) / 1000));
-    logPrintln(" s");
-}
-
+// ==========================================
+//       MAIN SETUP
+// ==========================================
 void setup() {
+    // 1. DISABLE BROWNOUT
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
+    
+    // 2. INIT LED
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, HIGH); // SOLID ON during power up
+    
     Serial.begin(115200);
     delay(1000);
-    
-    // Enable serial buffer after Serial.begin
-    serialBufferEnabled = true;
-    serialBuffer = "";
-    logPrintln("=== GPS TRACKER (WiFi) ===");
+    Serial.println("=== GSM ISOLATION TEST ===");
 
+    // 3. POWER UP GSM
     pinMode(MOSFET_GATE, OUTPUT);
     digitalWrite(MOSFET_GATE, HIGH);
-    delay(15000);
+    
+    // Wait 20 seconds for SIM800L to stabilize and find network
+    Serial.println("Waiting 20s for GSM init...");
+    delay(20000); // Wait 20s with LED SOLID ON
+    digitalWrite(LED_PIN, LOW);
 
-    gpsSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    // 4. GSM SERIAL
+    gsmSerial.begin(9600, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
     
-    gpsSerial.println("$PMTK220,1000*1F"); 
-    gpsSerial.println("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"); 
+    // 5. CONNECT GPRS
+    Serial.println("Connecting GPRS...");
+    int retry = 0;
+    while(!initGPRS()) {
+        retry++;
+        Serial.println("GPRS Retry " + String(retry));
+        signalSOS(); // Blink SOS if GPRS fails
+        delay(5000);
+        if(retry > 5) ESP.restart();
+    }
     
-    // Connect to WiFi
-    connectToWiFi();
+    // Connected!
+    blink(5, 100); // 5 fast blinks = Connected
 }
 
+// ==========================================
+//       MAIN LOOP
+// ==========================================
 void loop() {
-    while (gpsSerial.available() > 0) gps.encode(gpsSerial.read());
-
-    if (millis() - lastUploadTime > UPLOAD_INTERVAL) {
-        lastUploadTime = millis();
-        if (gps.location.isValid()) {
-            logPrint("GPS Lock: "); logPrintln(String(gps.satellites.value()));
-        } else {
-            logPrintln("GPS Searching...");
-        }
-        uploadLocation();
-    }
+    // Collect Data
+    int bat_mv = getBatteryMV();
+    int csq = getCSQ();
     
-    // Upload serial logs periodically
-    if (millis() - lastSerialLogUploadTime > SERIAL_LOG_UPLOAD_INTERVAL) {
-        lastSerialLogUploadTime = millis();
-        if (serialBuffer.length() > 0) {
-            uploadSerialLog();
-        }
-    }
+    // 1. Send Device Debug Info
+    String debugPayload = "{";
+    debugPayload += "\"gsm\":{\"csq\":" + String(csq) + "},";
+    debugPayload += "\"battery\":{\"voltage_mv\":" + String(bat_mv) + "}";
+    debugPayload += "}";
+    
+    Serial.println("Sending Debug: " + debugPayload);
+    postData(DEBUG_API_URL, debugPayload);
+    delay(2000);
+    
+    // 2. Send Dummy Bike Location
+    // Hardcoded dummy location (London) and dummy timestamp (Nov 22 2025)
+    String locPayload = "{";
+    locPayload += "\"latitude\":51.5074,";
+    locPayload += "\"longitude\":-0.1278,";
+    locPayload += "\"timestamp\":1763810000,"; 
+    locPayload += "\"battery_mv\":" + String(bat_mv);
+    locPayload += "}";
+    
+    Serial.println("Sending Loc: " + locPayload);
+    postData(LOCATION_API_URL, locPayload);
+    
+    // Wait 30 seconds before next loop
+    Serial.println("Sleeping...");
+    delay(30000);
 }

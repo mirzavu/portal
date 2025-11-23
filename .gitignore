@@ -63,6 +63,7 @@ Thumbs.db
 debug code
 *.tmp
 *.temp
+serial/
 
 # OS Files
 .DS_Store
