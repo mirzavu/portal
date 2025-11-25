@@ -1,6 +1,6 @@
-/* Gateway Hub - Full System v1.4 (PROMISCUOUS DEBUG)
+/* Gateway Hub - Full System v1.9 (CORRECT CREDENTIALS)
  * - Forces Channel 11
- * - Prints ALL ESP-NOW traffic regardless of MAC
+ * - Sends Pushover with VERIFIED credentials
  */
 
 #include <Arduino.h>
@@ -15,10 +15,11 @@
 
 const char* WIFI_SSID = "TheBoss";
 const char* WIFI_PASSWORD = "12121234";
-const char* PUSHOVER_USER_KEY = "u3y941692491128964968594379652";
-const char* PUSHOVER_API_TOKEN = "a79626153172523165943874357349";
 
-// Force Channel 11
+// VERIFIED CREDENTIALS
+const char* PUSHOVER_USER_KEY = "u9b5w63h547sn7nyd3139zupeguish"; 
+const char* PUSHOVER_API_TOKEN = "aa2c5h1msgmuta92zgjbc6w6qfa5k3"; 
+
 #define WIFI_CHANNEL 11
 
 struct __attribute__((packed)) DoorKnockMessage {
@@ -33,37 +34,26 @@ void connectToWiFi();
 void initESPNOW();
 void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len);
 void sendPushover(String message, String title);
+String urlEncode(String str);
 
 void setup() {
   Serial.begin(115200);
   delay(2000);
-  Serial.println("\n\n==== GATEWAY HUB STARTING (FORCE CHAN 11) ====");
+  Serial.println("\n\n==== GATEWAY HUB STARTING (FINAL) ====");
 
-  // 1. Init WiFi in Station Mode
   WiFi.mode(WIFI_STA);
-  
-  // 2. Init ESP-NOW immediately
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("ESP-NOW Init Failed");
-    ESP.restart();
-  }
+  if (esp_now_init() != ESP_OK) ESP.restart();
   esp_now_register_recv_cb(onESPNOWDataRecv);
 
-  // 3. Connect to WiFi (Let it auto-negotiate, but check channel after)
   connectToWiFi();
   
-  // 4. FORCE CHANNEL if it drifted
   if (WiFi.channel() != WIFI_CHANNEL) {
-    Serial.print("Router is on Channel "); Serial.println(WiFi.channel());
-    Serial.print("Forcing to Channel "); Serial.println(WIFI_CHANNEL);
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
     esp_wifi_set_promiscuous(false);
   }
 
-  Serial.print("Final Operational Channel: ");
-  Serial.println(WiFi.channel());
-  
+  Serial.print("Channel: "); Serial.println(WiFi.channel());
   Serial.println("\n✓ Gateway Hub Ready");
 }
 
@@ -78,19 +68,6 @@ void loop() {
 
       newDoorKnockReceived = false;
   }
-
-  static unsigned long lastPrint = 0;
-  if (millis() - lastPrint > 2000) {
-      // Re-enforce channel periodically just in case
-      if (WiFi.channel() != WIFI_CHANNEL) {
-         Serial.print("Drifted to "); Serial.println(WiFi.channel());
-         // esp_wifi_set_promiscuous(true);
-         // esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
-         // esp_wifi_set_promiscuous(false);
-      }
-      lastPrint = millis();
-  }
-
   delay(10);
 }
 
@@ -110,14 +87,39 @@ void connectToWiFi() {
 }
 
 void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
-  Serial.print("RX Packet from: ");
-  for(int i=0; i<6; i++) { Serial.print(mac[i], HEX); if(i<5) Serial.print(":"); }
-  Serial.print(" | Len: "); Serial.println(len);
-
   if (len == sizeof(DoorKnockMessage)) {
     memcpy((void*)&doorKnockData, data, sizeof(DoorKnockMessage));
     newDoorKnockReceived = true;
   }
+}
+
+String urlEncode(String str) {
+    String encodedString = "";
+    char c;
+    char code0;
+    char code1;
+    for (int i = 0; i < str.length(); i++) {
+        c = str.charAt(i);
+        if (c == ' ') {
+            encodedString += '+';
+        } else if (isalnum(c)) {
+            encodedString += c;
+        } else {
+            code1 = (c & 0xf) + '0';
+            if ((c & 0xf) > 9) {
+                code1 = (c & 0xf) - 10 + 'A';
+            }
+            c = (c >> 4) & 0xf;
+            code0 = c + '0';
+            if (c > 9) {
+                code0 = c - 10 + 'A';
+            }
+            encodedString += '%';
+            encodedString += code0;
+            encodedString += code1;
+        }
+    }
+    return encodedString;
 }
 
 void sendPushover(String message, String title) {
@@ -134,15 +136,20 @@ void sendPushover(String message, String title) {
     
     String postData = "token=" + String(PUSHOVER_API_TOKEN) + 
                       "&user=" + String(PUSHOVER_USER_KEY) + 
-                      "&message=" + message + 
-                      "&title=" + title + 
+                      "&message=" + urlEncode(message) + 
+                      "&title=" + urlEncode(title) + 
                       "&priority=1" + 
                       "&sound=persistent";
 
     int httpResponseCode = http.POST(postData);
     Serial.print("HTTP Code: "); Serial.println(httpResponseCode);
+    
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println(response);
+    }
     http.end();
   } else {
-    Serial.println("WiFi Disconnected. Cannot send Pushover.");
+    Serial.println("WiFi Disconnected.");
   }
 }
