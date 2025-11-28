@@ -1,6 +1,8 @@
-/* Gateway Hub - Full System v1.9 (CORRECT CREDENTIALS)
+/* Gateway Hub - Full System v2.0 (Heartbeat + Battery Logic)
  * - Forces Channel 11
- * - Sends Pushover with VERIFIED credentials
+ * - Handles Knock vs Heartbeat
+ * - Converts Voltage to %
+ * - Sends Low Battery Alerts
  */
 
 #include <Arduino.h>
@@ -23,23 +25,28 @@ const char* PUSHOVER_API_TOKEN = "aa2c5h1msgmuta92zgjbc6w6qfa5k3";
 #define WIFI_CHANNEL 11
 
 struct __attribute__((packed)) DoorKnockMessage {
-  int random_id;    
-  float battery_v;  
+  uint8_t type;     
+  int random_id;
+  float battery_v;
 };
 
 volatile bool newDoorKnockReceived = false;
 volatile DoorKnockMessage doorKnockData;
 
+unsigned long lastBatteryAlertMillis = 0;
+int lastKnockID = 0;
+
 void connectToWiFi();
 void initESPNOW();
 void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len);
-void sendPushover(String message, String title);
+void sendPushover(String message, String title, int priority, String sound);
 String urlEncode(String str);
+int getBatteryPercentage(float voltage);
 
 void setup() {
   Serial.begin(115200);
   delay(2000);
-  Serial.println("\n\n==== GATEWAY HUB STARTING (FINAL) ====");
+  Serial.println("\n\n==== GATEWAY HUB v2.0 STARTING ====");
 
   WiFi.mode(WIFI_STA);
   if (esp_now_init() != ESP_OK) ESP.restart();
@@ -59,16 +66,29 @@ void setup() {
 
 void loop() {
   if (newDoorKnockReceived) {
-      Serial.println("--------------------------------");
-      Serial.print("DOOR KNOCK RECEIVED! ID: ");
-      Serial.println(doorKnockData.random_id);
-      
-      String msg = "Knock Detected! Bat: " + String(doorKnockData.battery_v, 2) + "V";
-      sendPushover(msg, "Door Security");
-
-      newDoorKnockReceived = false;
+    newDoorKnockReceived = false;
+    int pct = getBatteryPercentage(doorKnockData.battery_v);
+    if (doorKnockData.type == 1) {
+        // knock
+        if (doorKnockData.random_id != lastKnockID) {
+            lastKnockID = doorKnockData.random_id;
+            sendPushover("Door knock detected", "Door Security", 0, "bike");
+        }
+        return;
+    }
+    if (doorKnockData.type == 0) {
+        // heartbeat
+        unsigned long now = millis();
+        if (pct < 30) {
+            if (now - lastBatteryAlertMillis >= 20000) {
+                lastBatteryAlertMillis = now;
+                String msg = "Battery low";
+                sendPushover(msg, "Door Battery", 1, "classical");
+            }
+        }
+        return;
+    }
   }
-  delay(10);
 }
 
 void connectToWiFi() {
@@ -91,6 +111,17 @@ void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
     memcpy((void*)&doorKnockData, data, sizeof(DoorKnockMessage));
     newDoorKnockReceived = true;
   }
+}
+
+int getBatteryPercentage(float voltage) {
+  // Li-Ion Mapping (Approximate)
+  // 4.2V = 100%, 3.0V = 0%
+  if (voltage >= 4.20) return 100;
+  if (voltage <= 3.00) return 0;
+  
+  // Linear interpolation
+  int pct = (int)((voltage - 3.00) / (4.20 - 3.00) * 100.0);
+  return pct;
 }
 
 String urlEncode(String str) {
@@ -122,7 +153,7 @@ String urlEncode(String str) {
     return encodedString;
 }
 
-void sendPushover(String message, String title) {
+void sendPushover(String message, String title, int priority, String sound) {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     WiFiClientSecure client;
@@ -138,13 +169,16 @@ void sendPushover(String message, String title) {
                       "&user=" + String(PUSHOVER_USER_KEY) + 
                       "&message=" + urlEncode(message) + 
                       "&title=" + urlEncode(title) + 
-                      "&priority=1" + 
-                      "&sound=persistent";
+                      "&priority=" + String(priority) + 
+                      "&sound=" + urlEncode(sound);
 
     int httpResponseCode = http.POST(postData);
-    Serial.print("HTTP Code: "); Serial.println(httpResponseCode);
-    
-    if (httpResponseCode > 0) {
+    if (httpResponseCode == 200) {
+      Serial.println("SUCCESS");
+    } else {
+      Serial.print("FAILED (Code: ");
+      Serial.print(httpResponseCode);
+      Serial.print(") Response: ");
       String response = http.getString();
       Serial.println(response);
     }
