@@ -86,7 +86,11 @@ void sendPacket(uint8_t type) {
   m.voltage = readBattery();
 
   Serial.print("Sending Packet Type: ");
-  Serial.println(type);
+  Serial.print(type);
+  Serial.print(" (");
+  Serial.print(type == 1 ? "KNOCK" : "HEARTBEAT");
+  Serial.print(") | Voltage: ");
+  Serial.println(m.voltage);
 
   // Try sending a few times
   for (int i = 0; i < 3; i++) {
@@ -100,10 +104,12 @@ void sendPacket(uint8_t type) {
     }
     
     if (lastSendStatus == 0) {
-      Serial.println("Delivery Success");
+      Serial.println("✓ Delivery Success");
       break;
     } else {
-      Serial.println("Delivery Fail, Retrying...");
+      Serial.print("✗ Delivery Failed, Retry ");
+      Serial.print(i + 1);
+      Serial.println("/3");
       delay(10);
     }
   }
@@ -115,7 +121,9 @@ void sendPacket(uint8_t type) {
 void setup() {
   Serial.begin(115200);
   delay(100);
-  Serial.println("\n\n--- Door Knock Start ---");
+  Serial.println("\n\n========================================");
+  Serial.println("    DOOR KNOCK SENSOR STARTING");
+  Serial.println("========================================");
 
   pinMode(PIN_MOSFET, OUTPUT);
   digitalWrite(PIN_MOSFET, LOW);
@@ -126,38 +134,39 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PIN_KNOCK), knockISR, CHANGE);
 
   // Send initial boot packet
+  Serial.println(">> Sending boot heartbeat...");
   sendPacket(0);
+  Serial.println("========================================\n");
 }
 
-const unsigned long HEARTBEAT_INTERVAL_MS = 10000; // 10 sec for testing
+// CHANGED: 1 hour heartbeat interval (3,600,000 ms)
+const unsigned long HEARTBEAT_INTERVAL_MS = 3600000; // 1 hour
 
 void loop() {
   // Handle any pending knocks immediately
   if (knockFlag) {
-      Serial.println("Knock Detected (Pending)!");
+      Serial.println("\n🚪 KNOCK DETECTED!");
       knockFlag = false;
       sendPacket(1);
-      delay(200);
+      delay(200); // Debounce
   }
 
-  static unsigned long lastHeartbeat = 0; // 0 ensures first check is valid if needed, but we just sent one.
+  static unsigned long lastHeartbeat = 0;
   
   // Initialize lastHeartbeat after first send if 0
   if (lastHeartbeat == 0) lastHeartbeat = millis();
 
   // Heartbeat Check
   if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-      Serial.println("Sending Heartbeat");
+      Serial.println("\n⏰ Heartbeat Timer Expired");
       sendPacket(0);
       lastHeartbeat = millis();
   }
 
-  Serial.println("Going to Light Sleep...");
+  Serial.println("💤 Entering Light Sleep...");
   Serial.flush();
   
   int startPinState = digitalRead(PIN_KNOCK);
-  Serial.print("Sleep Start Pin State: ");
-  Serial.println(startPinState);
 
   // Calculate remaining time to next heartbeat
   unsigned long passed = millis() - lastHeartbeat;
@@ -182,18 +191,15 @@ void loop() {
   wifi_fpm_do_sleep(sleepTimeMs * 1000); 
   
   // Use Smart Delay to allow break-on-interrupt
-  // We add a small buffer to sleepTimeMs to ensure FPM timer fires if no interrupt
   smartDelay(sleepTimeMs + 50);
   
-  Serial.println("Woke Up!");
+  Serial.println("⏰ Woke Up!");
   
   // Determine cause
   if (knockFlag) {
-      Serial.println("Woke on Knock (ISR Triggered)");
-      knockFlag = false;
-      sendPacket(1);
-      delay(200);
+      Serial.println("   Reason: Door knock interrupt");
+      // Don't clear knockFlag here - let it be handled at start of next loop
   } else {
-      Serial.println("Woke on Timer");
+      Serial.println("   Reason: Heartbeat timer");
   }
 }

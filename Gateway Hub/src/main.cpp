@@ -1,189 +1,258 @@
-/* Gateway Hub - Full System v2.0 (Heartbeat + Battery Logic)
- * - Forces Channel 11
- * - Handles Knock vs Heartbeat
- * - Converts Voltage to %
- * - Sends Low Battery Alerts
- */
-
 #include <Arduino.h>
-#include <SPI.h>
-#include <RF24.h>              
-#include <WiFi.h>               
-#include <HTTPClient.h>         
-#include <WiFiClientSecure.h>   
-#include <esp_now.h>            
-#include <esp_wifi.h>           
-#include <time.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
+// --- USER SETTINGS ---
 const char* WIFI_SSID = "TheBoss";
 const char* WIFI_PASSWORD = "12121234";
 
-// VERIFIED CREDENTIALS
-const char* PUSHOVER_USER_KEY = "u9b5w63h547sn7nyd3139zupeguish"; 
-const char* PUSHOVER_API_TOKEN = "aa2c5h1msgmuta92zgjbc6w6qfa5k3"; 
+// Pushover Keys
+const char* PUSHOVER_USER_KEY = "u9b5w63h547sn7nyd3139zupeguish";
+const char* PUSHOVER_API_TOKEN = "aa2c5h1msgmuta92zgjbc6w6qfa5k3";
 
+// Must match Sender Channel
 #define WIFI_CHANNEL 11
 
+// Must match Sender Struct exactly
 struct __attribute__((packed)) DoorKnockMessage {
-  uint8_t type;     
+  uint8_t type;       // 1 = knock, 0 = heartbeat
   int random_id;
-  float battery_v;
+  float voltage;
 };
 
-volatile bool newDoorKnockReceived = false;
-volatile DoorKnockMessage doorKnockData;
+// --- GLOBALS ---
+volatile bool newPacket = false;
+DoorKnockMessage pkt;
+SemaphoreHandle_t pktMutex;
 
-unsigned long lastBatteryAlertMillis = 0;
+unsigned long lastLowBatteryAlert = 0;
+unsigned long lastDailyBatteryReport = 0;
 int lastKnockID = 0;
+unsigned long packetCounter = 0;
 
-void connectToWiFi();
-void initESPNOW();
-void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len);
-void sendPushover(String message, String title, int priority, String sound);
-String urlEncode(String str);
-int getBatteryPercentage(float voltage);
+void sendPushover(String msg, String title, int priority, String sound);
+String urlEncode(String s);
+
+// ESP-NOW Callback
+void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
+  if (len == sizeof(DoorKnockMessage)) {
+    if (xSemaphoreTake(pktMutex, 0) == pdTRUE) {
+      memcpy(&pkt, data, sizeof(DoorKnockMessage));
+      newPacket = true;
+      xSemaphoreGive(pktMutex);
+    }
+  }
+  Serial.printf("RAW RX: len=%d, type=%d\n", len, data[0]);
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(2000);
-  Serial.println("\n\n==== GATEWAY HUB v2.0 STARTING ====");
+  delay(1000);
+  Serial.println("\n\n=== GATEWAY STARTING ===");
 
-  WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) ESP.restart();
-  esp_now_register_recv_cb(onESPNOWDataRecv);
+  // Create mutex for thread safety
+  pktMutex = xSemaphoreCreateMutex();
 
-  connectToWiFi();
+  // Step 1: Start WiFi in AP+STA mode to control channel
+  WiFi.mode(WIFI_AP_STA);
   
-  if (WiFi.channel() != WIFI_CHANNEL) {
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
+  // Step 2: Create a soft AP on channel 11 (this locks the radio to channel 11)
+  WiFi.softAP("ESP32_Gateway_Hidden", NULL, WIFI_CHANNEL, 1, 0); // hidden, no clients
+  Serial.printf("SoftAP created on channel %d\n", WIFI_CHANNEL);
+
+  // Step 3: Now connect to your WiFi router
+  Serial.printf("Connecting to WiFi: %s\n", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 20000) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("WiFi Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("Current Channel: %d\n", WiFi.channel());
+  } else {
+    Serial.println("WiFi Connection FAILED");
   }
 
-  Serial.print("Channel: "); Serial.println(WiFi.channel());
-  Serial.println("\n✓ Gateway Hub Ready");
+  // Step 4: Verify channel is correct
+  uint8_t primaryChan;
+  wifi_second_chan_t secondChan;
+  esp_wifi_get_channel(&primaryChan, &secondChan);
+  Serial.printf("Radio locked to channel: %d\n", primaryChan);
+
+  if (primaryChan != WIFI_CHANNEL) {
+    Serial.println("WARNING: Channel mismatch! Forcing channel...");
+    esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    delay(100);
+    esp_wifi_get_channel(&primaryChan, &secondChan);
+    Serial.printf("After force - Channel: %d\n", primaryChan);
+  }
+
+  // Step 5: Initialize ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init Failed!");
+    ESP.restart();
+  }
+  
+  // Register receive callback
+  esp_now_register_recv_cb(onRecv);
+  
+  Serial.println("\n=== Gateway Ready & Listening on Channel 11 ===\n");
 }
 
 void loop() {
-  if (newDoorKnockReceived) {
-    newDoorKnockReceived = false;
-    int pct = getBatteryPercentage(doorKnockData.battery_v);
-    if (doorKnockData.type == 1) {
-        // knock
-        if (doorKnockData.random_id != lastKnockID) {
-            lastKnockID = doorKnockData.random_id;
-            sendPushover("Door knock detected", "Door Security", 0, "bike");
-        }
-        return;
+  if (newPacket) {
+    DoorKnockMessage local;
+    
+    // Thread-safe copy
+    if (xSemaphoreTake(pktMutex, portMAX_DELAY) == pdTRUE) {
+      memcpy(&local, &pkt, sizeof(DoorKnockMessage));
+      newPacket = false;
+      xSemaphoreGive(pktMutex);
     }
-    if (doorKnockData.type == 0) {
-        // heartbeat
-        unsigned long now = millis();
+
+    packetCounter++;
+    unsigned long now = millis();
+    
+    Serial.println("\n========================================");
+    Serial.printf("PACKET #%lu RECEIVED\n", packetCounter);
+    Serial.printf("Type: %d | ID: %d | Voltage: %.2fV\n", 
+                  local.type, local.random_id, local.voltage);
+    Serial.println("========================================");
+
+    // --- HANDLE KNOCK (Type 1) ---
+    if (local.type == 1) {
+      Serial.println("📢 KNOCK DETECTED");
+      
+      if (local.random_id != lastKnockID) {
+        lastKnockID = local.random_id;
+        Serial.println("✅ ACTION: Sending knock alert (NEW unique ID)");
+        sendPushover("Door knock detected!", "Security Alert", 1, "bike");
+      } else {
+        Serial.printf("⚠️  IGNORED: Duplicate knock (ID %d already processed)\n", local.random_id);
+        Serial.println("   Reason: Same random_id - likely a retry/duplicate packet");
+      }
+    }
+
+    // --- HANDLE HEARTBEAT (Type 0) ---
+    else if (local.type == 0) {
+      Serial.println("💓 HEARTBEAT RECEIVED");
+      
+      // Check if on USB power (< 2.5V means laptop/USB connected)
+      if (local.voltage < 2.5) {
+        Serial.printf("🔌 Device on USB/Laptop Power (%.2fV)\n", local.voltage);
+        Serial.println("ℹ️  Battery monitoring disabled for USB power");
+      } else {
+        // Calculate battery percentage
+        int pct = (local.voltage <= 3.0) ? 0 : 
+                  (local.voltage >= 4.2) ? 100 : 
+                  (int)((local.voltage - 3.0) / 1.2 * 100);
+        
+        Serial.printf("🔋 Battery Status: %d%% (%.2fV)\n", pct, local.voltage);
+
+        // LOW BATTERY ALERT (< 30%) - Once per hour
         if (pct < 30) {
-            if (now - lastBatteryAlertMillis >= 20000) {
-                lastBatteryAlertMillis = now;
-                String msg = "Battery low";
-                sendPushover(msg, "Door Battery", 1, "classical");
-            }
-        }
-        return;
-    }
-  }
-}
-
-void connectToWiFi() {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected! IP: ");
-    Serial.println(WiFi.localIP());
-  }
-}
-
-void onESPNOWDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
-  if (len == sizeof(DoorKnockMessage)) {
-    memcpy((void*)&doorKnockData, data, sizeof(DoorKnockMessage));
-    newDoorKnockReceived = true;
-  }
-}
-
-int getBatteryPercentage(float voltage) {
-  // Li-Ion Mapping (Approximate)
-  // 4.2V = 100%, 3.0V = 0%
-  if (voltage >= 4.20) return 100;
-  if (voltage <= 3.00) return 0;
-  
-  // Linear interpolation
-  int pct = (int)((voltage - 3.00) / (4.20 - 3.00) * 100.0);
-  return pct;
-}
-
-String urlEncode(String str) {
-    String encodedString = "";
-    char c;
-    char code0;
-    char code1;
-    for (int i = 0; i < str.length(); i++) {
-        c = str.charAt(i);
-        if (c == ' ') {
-            encodedString += '+';
-        } else if (isalnum(c)) {
-            encodedString += c;
+          if (lastLowBatteryAlert == 0 || (now - lastLowBatteryAlert > 3600000)) {
+            lastLowBatteryAlert = now;
+            String msg = "Low Battery Warning: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
+            Serial.println("⚠️  ACTION: Sending LOW battery alert (< 30%)");
+            sendPushover(msg, "Door Battery LOW", 0, "classical");
+          } else {
+            unsigned long timeSince = (now - lastLowBatteryAlert) / 1000 / 60; // minutes
+            Serial.printf("⏳ IGNORED: Low battery alert rate-limited (last sent %lu min ago)\n", timeSince);
+          }
         } else {
-            code1 = (c & 0xf) + '0';
-            if ((c & 0xf) > 9) {
-                code1 = (c & 0xf) - 10 + 'A';
-            }
-            c = (c >> 4) & 0xf;
-            code0 = c + '0';
-            if (c > 9) {
-                code0 = c - 10 + 'A';
-            }
-            encodedString += '%';
-            encodedString += code0;
-            encodedString += code1;
+          Serial.println("✅ Battery level OK (above 30%)");
         }
+
+        // DAILY BATTERY REPORT - Once per 24 hours regardless of percentage
+        if (lastDailyBatteryReport == 0 || (now - lastDailyBatteryReport > 86400000)) {
+          lastDailyBatteryReport = now;
+          String msg = "Daily Report: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
+          Serial.println("📊 ACTION: Sending DAILY battery report (24hr check-in)");
+          sendPushover(msg, "Door Battery Status", 0, "pushover");
+        } else {
+          unsigned long hoursLeft = (86400000 - (now - lastDailyBatteryReport)) / 1000 / 60 / 60;
+          Serial.printf("⏰ Next daily report in ~%lu hours\n", hoursLeft);
+        }
+      }
     }
-    return encodedString;
+    
+    // Unknown packet type
+    else {
+      Serial.printf("❓ UNKNOWN packet type: %d\n", local.type);
+    }
+    
+    Serial.println("========================================\n");
+  }
+  
+  delay(10); // Small delay to prevent watchdog issues
+}
+
+// --- HELPER FUNCTIONS ---
+
+String urlEncode(String s) {
+  String encoded = "";
+  char c;
+  for (unsigned int i = 0; i < s.length(); i++) {
+    c = s.charAt(i);
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+        (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += c;
+    } else if (c == ' ') {
+      encoded += '+';
+    } else {
+      encoded += '%';
+      encoded += "0123456789ABCDEF"[(c >> 4) & 0xF];
+      encoded += "0123456789ABCDEF"[c & 0xF];
+    }
+  }
+  return encoded;
 }
 
 void sendPushover(String message, String title, int priority, String sound) {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    WiFiClientSecure client;
-    client.setInsecure(); 
-
-    String url = "https://api.pushover.net/1/messages.json";
-    Serial.println("Sending Pushover...");
-    
-    http.begin(client, url);
-    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    
-    String postData = "token=" + String(PUSHOVER_API_TOKEN) + 
-                      "&user=" + String(PUSHOVER_USER_KEY) + 
-                      "&message=" + urlEncode(message) + 
-                      "&title=" + urlEncode(title) + 
-                      "&priority=" + String(priority) + 
-                      "&sound=" + urlEncode(sound);
-
-    int httpResponseCode = http.POST(postData);
-    if (httpResponseCode == 200) {
-      Serial.println("SUCCESS");
-    } else {
-      Serial.print("FAILED (Code: ");
-      Serial.print(httpResponseCode);
-      Serial.print(") Response: ");
-      String response = http.getString();
-      Serial.println(response);
-    }
-    http.end();
-  } else {
-    Serial.println("WiFi Disconnected.");
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Error: No WiFi connection, cannot send Pushover.");
+    return;
   }
+
+  WiFiClientSecure client;
+  client.setInsecure(); 
+  HTTPClient http;
+
+  Serial.print("Sending Pushover notification... ");
+  
+  if (!http.begin(client, "https://api.pushover.net/1/messages.json")) {
+    Serial.println("FAILED to begin HTTP");
+    return;
+  }
+  
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  String body = "token=" + String(PUSHOVER_API_TOKEN) +
+                "&user=" + String(PUSHOVER_USER_KEY) +
+                "&message=" + urlEncode(message) +
+                "&title=" + urlEncode(title) +
+                "&priority=" + String(priority) +
+                "&sound=" + urlEncode(sound);
+
+  int httpCode = http.POST(body);
+  
+  if (httpCode == 200) {
+    Serial.println("SUCCESS!");
+  } else {
+    Serial.printf("FAILED (HTTP Code: %d)\n", httpCode);
+    if (httpCode > 0) {
+      String response = http.getString();
+      Serial.println("Response: " + response);
+    }
+  }
+  http.end();
 }
