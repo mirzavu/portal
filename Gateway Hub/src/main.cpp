@@ -30,10 +30,15 @@ SemaphoreHandle_t pktMutex;
 
 unsigned long lastLowBatteryAlert = 0;
 unsigned long lastDailyBatteryReport = 0;
+unsigned long lastPushNotification = 0; // Global cooldown tracker
 int lastKnockID = 0;
 unsigned long packetCounter = 0;
 
+const unsigned long PUSH_COOLDOWN_MS = 5000; // 5 second cooldown between ANY push notifications
+
+// --- FORWARD DECLARATIONS ---
 void sendPushover(String msg, String title, int priority, String sound);
+void sendDoorKnockAPI(String macAddress);
 String urlEncode(String s);
 
 // ESP-NOW Callback
@@ -133,8 +138,22 @@ void loop() {
       
       if (local.random_id != lastKnockID) {
         lastKnockID = local.random_id;
-        Serial.println("✅ ACTION: Sending knock alert (NEW unique ID)");
-        sendPushover("Door knock detected!", "Security Alert", 1, "bike");
+        
+        // Check cooldown
+        if (now - lastPushNotification >= PUSH_COOLDOWN_MS || lastPushNotification == 0) {
+          Serial.println("✅ ACTION: Sending knock alert (NEW unique ID)");
+          sendPushover("Door knock detected!", "Security Alert", 1, "bike");
+          
+          // Call door knock API
+          String mac = WiFi.macAddress();
+          sendDoorKnockAPI(mac);
+          
+          lastPushNotification = now; // Update cooldown timer
+        } else {
+          unsigned long cooldownLeft = (PUSH_COOLDOWN_MS - (now - lastPushNotification)) / 1000;
+          Serial.printf("🔇 COOLDOWN: Knock alert blocked (%lu sec remaining)\n", cooldownLeft);
+          Serial.println("   Reason: Global 5-second cooldown active");
+        }
       } else {
         Serial.printf("⚠️  IGNORED: Duplicate knock (ID %d already processed)\n", local.random_id);
         Serial.println("   Reason: Same random_id - likely a retry/duplicate packet");
@@ -160,10 +179,19 @@ void loop() {
         // LOW BATTERY ALERT (< 30%) - Once per hour
         if (pct < 30) {
           if (lastLowBatteryAlert == 0 || (now - lastLowBatteryAlert > 3600000)) {
-            lastLowBatteryAlert = now;
-            String msg = "Low Battery Warning: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
-            Serial.println("⚠️  ACTION: Sending LOW battery alert (< 30%)");
-            sendPushover(msg, "Door Battery LOW", 0, "classical");
+            
+            // Check cooldown
+            if (now - lastPushNotification >= PUSH_COOLDOWN_MS || lastPushNotification == 0) {
+              lastLowBatteryAlert = now;
+              String msg = "Low Battery Warning: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
+              Serial.println("⚠️  ACTION: Sending LOW battery alert (< 30%)");
+              sendPushover(msg, "Door Battery LOW", 0, "classical");
+              lastPushNotification = now; // Update cooldown timer
+            } else {
+              unsigned long cooldownLeft = (PUSH_COOLDOWN_MS - (now - lastPushNotification)) / 1000;
+              Serial.printf("🔇 COOLDOWN: Low battery alert blocked (%lu sec remaining)\n", cooldownLeft);
+            }
+            
           } else {
             unsigned long timeSince = (now - lastLowBatteryAlert) / 1000 / 60; // minutes
             Serial.printf("⏳ IGNORED: Low battery alert rate-limited (last sent %lu min ago)\n", timeSince);
@@ -174,10 +202,19 @@ void loop() {
 
         // DAILY BATTERY REPORT - Once per 24 hours regardless of percentage
         if (lastDailyBatteryReport == 0 || (now - lastDailyBatteryReport > 86400000)) {
-          lastDailyBatteryReport = now;
-          String msg = "Daily Report: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
-          Serial.println("📊 ACTION: Sending DAILY battery report (24hr check-in)");
-          sendPushover(msg, "Door Battery Status", 0, "pushover");
+          
+          // Check cooldown
+          if (now - lastPushNotification >= PUSH_COOLDOWN_MS || lastPushNotification == 0) {
+            lastDailyBatteryReport = now;
+            String msg = "Daily Report: " + String(pct) + "% (" + String(local.voltage, 2) + "V)";
+            Serial.println("📊 ACTION: Sending DAILY battery report (24hr check-in)");
+            sendPushover(msg, "Door Battery Status", 0, "pushover");
+            lastPushNotification = now; // Update cooldown timer
+          } else {
+            unsigned long cooldownLeft = (PUSH_COOLDOWN_MS - (now - lastPushNotification)) / 1000;
+            Serial.printf("🔇 COOLDOWN: Daily report blocked (%lu sec remaining)\n", cooldownLeft);
+          }
+          
         } else {
           unsigned long hoursLeft = (86400000 - (now - lastDailyBatteryReport)) / 1000 / 60 / 60;
           Serial.printf("⏰ Next daily report in ~%lu hours\n", hoursLeft);
@@ -197,6 +234,46 @@ void loop() {
 }
 
 // --- HELPER FUNCTIONS ---
+
+void sendDoorKnockAPI(String macAddress) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Error: No WiFi connection, cannot send Door Knock API.");
+    return;
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+
+  Serial.print("Calling Door Knock API... ");
+  // if (!http.begin(client, "https://portal.demotesting.co.uk/api/door-knock")) {
+  if (!http.begin(client, "http://192.168.29.174:8080/api/door-knock")) { // Change IP to your laptop!
+    Serial.println("FAILED to begin HTTP");
+    return;
+  }
+  
+  http.addHeader("Content-Type", "application/json");
+  
+  // Build JSON body (timestamp will be generated server-side)
+  String jsonBody = "{";
+  jsonBody += "\"mac\":\"" + macAddress + "\",";
+  jsonBody += "\"knock_count\":1";
+  jsonBody += "}";
+
+  Serial.println();
+  Serial.println("Request Body: " + jsonBody);
+
+  int httpCode = http.POST(jsonBody);
+  
+  if (httpCode > 0) {
+    Serial.printf("Door Knock API Response Code: %d\n", httpCode);
+    String response = http.getString();
+    Serial.println("Response: " + response);
+  } else {
+    Serial.printf("Door Knock API FAILED (Error: %d)\n", httpCode);
+  }
+  
+  http.end();
+}
 
 String urlEncode(String s) {
   String encoded = "";
