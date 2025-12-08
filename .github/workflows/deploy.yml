@@ -4,8 +4,6 @@ name: Deploy Production (Atomic)
 on:
   push:
     branches: ["main"]
-    paths:
-      - 'portalweb/**'
 
 jobs:
   build-and-deploy:
@@ -161,4 +159,3 @@ jobs:
             rm -rf $CACHE_DIR/*
             
             echo "Deployment $TIMESTAMP Successful"
-
