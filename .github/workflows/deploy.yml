@@ -44,7 +44,8 @@ jobs:
         run: |
           cp portalweb/release.tar.gz release.tar.gz
           cp portalweb/ecosystem.config.js ecosystem.config.js
-          cp portalweb/pocketbase pocketbase
+          # Copy pocketbase if it exists (it might not be in git)
+          [ -f portalweb/pocketbase ] && cp portalweb/pocketbase pocketbase || echo "pocketbase binary not found, will skip in deployment"
 
       # --- TRANSFER PHASE ---
       - name: Upload to Server Cache
