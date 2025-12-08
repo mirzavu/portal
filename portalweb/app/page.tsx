@@ -1,5 +1,6 @@
 'use client';
 
+// Main dashboard page for security operations
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Shield, Map as MapIcon, Lock } from 'lucide-react';
