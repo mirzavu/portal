@@ -14,18 +14,34 @@ export default function CameraPage() {
   const streamUrl = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL;
 
   useEffect(() => {
+    console.log('[CAMERA DEBUG] ===== CAMERA PAGE LOADED =====');
+    console.log('[CAMERA DEBUG] streamUrl:', streamUrl);
+    console.log('[CAMERA DEBUG] streamUrl type:', typeof streamUrl);
+    console.log('[CAMERA DEBUG] streamUrl truthy?', !!streamUrl);
+    console.log('[CAMERA DEBUG] process.env:', process.env);
+    console.log('[CAMERA DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL:', process.env.NEXT_PUBLIC_CAMERA_STREAM_URL);
+    
     if (!streamUrl) {
+      console.log('[CAMERA DEBUG] No stream URL - setting status to no-url');
       setStreamStatus('no-url');
       return;
     }
 
     const video = videoRef.current;
-    if (!video) return;
+    console.log('[CAMERA DEBUG] video element:', video);
+    console.log('[CAMERA DEBUG] video element exists?', !!video);
+    if (!video) {
+      console.log('[CAMERA DEBUG] Video element not ready yet, returning');
+      return;
+    }
 
     // Check if browser supports native HLS (Safari, iOS)
     const canPlayNativeHLS = video.canPlayType('application/vnd.apple.mpegurl');
+    console.log('[CAMERA DEBUG] Native HLS support:', canPlayNativeHLS);
     
     if (canPlayNativeHLS) {
+      console.log('[CAMERA DEBUG] Using native HLS playback');
+      console.log('[CAMERA DEBUG] Setting video.src to:', streamUrl);
       video.src = streamUrl;
       
       const handleLoadedMetadata = () => {
@@ -49,31 +65,52 @@ export default function CameraPage() {
     }
 
     // Use hls.js for browsers that don't support native HLS
-    if (Hls.isSupported()) {
+    const hlsSupported = Hls.isSupported();
+    console.log('[CAMERA DEBUG] HLS.js supported?', hlsSupported);
+    
+    if (hlsSupported) {
+      console.log('[CAMERA DEBUG] Creating HLS instance');
+      console.log('[CAMERA DEBUG] Loading source:', streamUrl);
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        debug: false, // Disable verbose HLS.js logging in production
+        debug: true, // Enable debug logging
       });
 
       hlsRef.current = hls;
 
       hls.loadSource(streamUrl);
+      console.log('[CAMERA DEBUG] Attaching media to video element');
       hls.attachMedia(video);
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_LOADING, () => {
+        console.log('[CAMERA DEBUG] HLS: MANIFEST_LOADING event');
+      });
+
+      hls.on(Hls.Events.MANIFEST_LOADED, (event, data) => {
+        console.log('[CAMERA DEBUG] HLS: MANIFEST_LOADED event', data);
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+        console.log('[CAMERA DEBUG] HLS: MANIFEST_PARSED event', data);
+        console.log('[CAMERA DEBUG] Attempting to play video');
         video.play().then(() => {
+          console.log('[CAMERA DEBUG] Video play() succeeded');
           setStreamStatus('playing');
         }).catch((err) => {
-          console.error('[CAMERA] Error playing video:', err);
+          console.error('[CAMERA DEBUG] Error playing video:', err);
           setStreamStatus('error');
           setErrorMessage(`Failed to play stream: ${err.message}`);
         });
       });
 
       hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('[CAMERA DEBUG] HLS: ERROR event', data);
+        console.error('[CAMERA DEBUG] Error type:', data.type);
+        console.error('[CAMERA DEBUG] Error details:', data.details);
+        console.error('[CAMERA DEBUG] Error fatal?', data.fatal);
         if (data.fatal) {
-          console.error('[CAMERA] HLS fatal error:', data.type, data.details);
+          console.error('[CAMERA DEBUG] HLS fatal error:', data.type, data.details);
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               setStreamStatus('error');
@@ -94,12 +131,15 @@ export default function CameraPage() {
         }
       });
     } else {
+      console.error('[CAMERA DEBUG] HLS.js is not supported in this browser');
       setStreamStatus('error');
       setErrorMessage('HLS is not supported in this browser');
     }
 
     return () => {
+      console.log('[CAMERA DEBUG] Cleanup function called');
       if (hlsRef.current) {
+        console.log('[CAMERA DEBUG] Destroying HLS instance');
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
