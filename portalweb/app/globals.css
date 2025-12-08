@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #e0e0e0;
+  
+  /* SecureHub Color Palette */
+  --obsidian: #0a0a0a;
+  --charcoal: #1a1a1a;
+  --blood: #8a0303;
+  --gold: #d4af37;
+  --terminal: #00ff00;
+  
+  /* Neon Accents */
+  --neon-cyan: #00ffff;
+  --neon-magenta: #ff00ff;
+  --neon-red: #ff0000;
+  --neon-green: #00ff00;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-obsidian: var(--obsidian);
+  --color-charcoal: var(--charcoal);
+  --color-blood: var(--blood);
+  --color-gold: var(--gold);
+  --color-terminal: var(--terminal);
+}
+
+body {
+  background: #000000;
+  background-image: 
+    radial-gradient(circle at 20% 50%, rgba(0, 255, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(255, 0, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 40% 20%, rgba(255, 0, 0, 0.02) 0%, transparent 50%);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Scanline overlay effect */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.1;
+}
+
+/* Utility classes for SecureHub theme */
+.bg-obsidian {
+  background-color: var(--obsidian);
+}
+
+.bg-charcoal {
+  background-color: var(--charcoal);
+}
+
+.text-blood {
+  color: var(--blood);
+}
+
+.text-gold {
+  color: var(--gold);
+}
+
+.text-terminal {
+  color: var(--terminal);
+}
+
+.border-blood {
+  border-color: var(--blood);
+}
+
+.border-gold {
+  border-color: var(--gold);
+}
+
+/* Glitch Animation */
+@keyframes glitch {
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-2px, 2px);
+  }
+  40% {
+    transform: translate(-2px, -2px);
+  }
+  60% {
+    transform: translate(2px, 2px);
+  }
+  80% {
+    transform: translate(2px, -2px);
+  }
+  100% {
+    transform: translate(0);
+  }
+}
+
+@keyframes glitch-text {
+  0%, 100% {
+    text-shadow: 
+      2px 0 #00ffff,
+      -2px 0 #ff00ff;
+  }
+  25% {
+    text-shadow: 
+      -2px 0 #00ffff,
+      2px 0 #ff00ff;
+  }
+  50% {
+    text-shadow: 
+      2px 0 #ff00ff,
+      -2px 0 #00ffff;
+  }
+  75% {
+    text-shadow: 
+      -2px 0 #ff00ff,
+      2px 0 #00ffff;
+  }
+}
+
+@keyframes neon-pulse {
+  0%, 100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.8;
+    filter: brightness(1.2);
+  }
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.animate-scan {
+  animation: scan 3s linear infinite;
+}
+
+/* Neon Glow Text */
+.neon-cyan {
+  color: var(--neon-cyan);
+  text-shadow: 
+    0 0 5px var(--neon-cyan),
+    0 0 10px var(--neon-cyan),
+    0 0 15px var(--neon-cyan);
+}
+
+.neon-magenta {
+  color: var(--neon-magenta);
+  text-shadow: 
+    0 0 5px var(--neon-magenta),
+    0 0 10px var(--neon-magenta),
+    0 0 15px var(--neon-magenta);
+}
+
+.neon-red {
+  color: var(--neon-red);
+  text-shadow: 
+    0 0 5px var(--neon-red),
+    0 0 10px var(--neon-red),
+    0 0 15px var(--neon-red);
+}
+
+.neon-green {
+  color: var(--neon-green);
+  text-shadow: 
+    0 0 5px var(--neon-green),
+    0 0 10px var(--neon-green),
+    0 0 15px var(--neon-green);
+}
