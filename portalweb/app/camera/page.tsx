@@ -19,7 +19,12 @@ export default function CameraPage() {
     console.log('[CAMERA DEBUG] streamUrl type:', typeof streamUrl);
     console.log('[CAMERA DEBUG] streamUrl truthy?', !!streamUrl);
     console.log('[CAMERA DEBUG] process.env:', process.env);
+    console.log('[CAMERA DEBUG] process.env keys:', Object.keys(process.env));
     console.log('[CAMERA DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL:', process.env.NEXT_PUBLIC_CAMERA_STREAM_URL);
+    console.log('[CAMERA DEBUG] NEXT_PUBLIC_POCKETBASE_URL:', process.env.NEXT_PUBLIC_POCKETBASE_URL);
+    console.log('[CAMERA DEBUG] NEXT_PUBLIC_PIN_CODE:', process.env.NEXT_PUBLIC_PIN_CODE);
+    console.log('[CAMERA DEBUG] typeof process.env:', typeof process.env);
+    console.log('[CAMERA DEBUG] process.env.NEXT_PUBLIC_* count:', Object.keys(process.env).filter(k => k.startsWith('NEXT_PUBLIC_')).length);
     
     if (!streamUrl) {
       console.log('[CAMERA DEBUG] No stream URL - setting status to no-url');

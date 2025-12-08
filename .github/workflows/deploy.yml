@@ -26,8 +26,19 @@ jobs:
 
       - name: Build Next.js (Standalone)
         working-directory: portalweb
+        env:
+          NEXT_PUBLIC_CAMERA_STREAM_URL: ${{ secrets.NEXT_PUBLIC_CAMERA_STREAM_URL }}
+          NEXT_PUBLIC_POCKETBASE_URL: ${{ secrets.NEXT_PUBLIC_POCKETBASE_URL }}
+          NEXT_PUBLIC_PIN_CODE: ${{ secrets.NEXT_PUBLIC_PIN_CODE }}
         run: |
+          echo "[BUILD DEBUG] ===== BUILD START ======"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL: $NEXT_PUBLIC_CAMERA_STREAM_URL"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_POCKETBASE_URL: $NEXT_PUBLIC_POCKETBASE_URL"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_PIN_CODE: $NEXT_PUBLIC_PIN_CODE"
+          echo "[BUILD DEBUG] All NEXT_PUBLIC_ vars:"
+          env | grep NEXT_PUBLIC_ || echo "No NEXT_PUBLIC_ vars found!"
           npm run build
+          echo "[BUILD DEBUG] ===== BUILD COMPLETE ======"
           # Standalone output does not include public/ or static assets by default.
           # We manually copy them into the standalone folder to create a complete artifact.
           cp -r public .next/standalone/public
