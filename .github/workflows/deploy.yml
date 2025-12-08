@@ -39,6 +39,13 @@ jobs:
         # Tarballing makes the upload much faster than thousands of small files
         run: tar -czf release.tar.gz -C .next/standalone .
 
+      - name: Prepare Files for Upload
+        # Copy files to repo root so SCP uploads them without portalweb/ prefix
+        run: |
+          cp portalweb/release.tar.gz release.tar.gz
+          cp portalweb/ecosystem.config.js ecosystem.config.js
+          cp portalweb/pocketbase pocketbase
+
       # --- TRANSFER PHASE ---
       - name: Upload to Server Cache
         uses: appleboy/scp-action@master
@@ -47,7 +54,7 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           # We upload the app code, the PM2 config, and the PocketBase binary
-          source: "portalweb/release.tar.gz,portalweb/ecosystem.config.js,portalweb/pocketbase"
+          source: "release.tar.gz,ecosystem.config.js,pocketbase"
           target: "/home/${{ secrets.USERNAME }}/deploy-cache/"
 
       # --- DEPLOY PHASE ---
