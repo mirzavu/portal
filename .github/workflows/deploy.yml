@@ -37,7 +37,10 @@ jobs:
           echo "[BUILD DEBUG] NEXT_PUBLIC_PIN_CODE: $NEXT_PUBLIC_PIN_CODE"
           echo "[BUILD DEBUG] All NEXT_PUBLIC_ vars:"
           env | grep NEXT_PUBLIC_ || echo "No NEXT_PUBLIC_ vars found!"
-          npm run build
+          echo "[BUILD DEBUG] Running npm run build..."
+          npm run build 2>&1 | tee build.log
+          echo "[BUILD DEBUG] Build log saved, checking for config debug output..."
+          grep -i "NEXT CONFIG DEBUG" build.log || echo "No config debug output found"
           echo "[BUILD DEBUG] ===== BUILD COMPLETE ======"
           # Standalone output does not include public/ or static assets by default.
           # We manually copy them into the standalone folder to create a complete artifact.
