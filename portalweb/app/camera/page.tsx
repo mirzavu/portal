@@ -10,7 +10,7 @@ export default function CameraPage() {
   const [streamStatus, setStreamStatus] = useState<'loading' | 'playing' | 'error' | 'no-url'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // Stream URL from environment variable
+  // Stream URL from environment variable (baked at build time)
   const streamUrl = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL;
 
   useEffect(() => {
