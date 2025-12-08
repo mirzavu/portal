@@ -32,15 +32,24 @@ jobs:
           NEXT_PUBLIC_PIN_CODE: ${{ secrets.NEXT_PUBLIC_PIN_CODE }}
         run: |
           echo "[BUILD DEBUG] ===== BUILD START ======"
-          echo "[BUILD DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL: $NEXT_PUBLIC_CAMERA_STREAM_URL"
-          echo "[BUILD DEBUG] NEXT_PUBLIC_POCKETBASE_URL: $NEXT_PUBLIC_POCKETBASE_URL"
-          echo "[BUILD DEBUG] NEXT_PUBLIC_PIN_CODE: $NEXT_PUBLIC_PIN_CODE"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL length: ${#NEXT_PUBLIC_CAMERA_STREAM_URL}"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_POCKETBASE_URL length: ${#NEXT_PUBLIC_POCKETBASE_URL}"
+          echo "[BUILD DEBUG] NEXT_PUBLIC_PIN_CODE length: ${#NEXT_PUBLIC_PIN_CODE}"
           echo "[BUILD DEBUG] All NEXT_PUBLIC_ vars:"
           env | grep NEXT_PUBLIC_ || echo "No NEXT_PUBLIC_ vars found!"
           echo "[BUILD DEBUG] Running npm run build..."
           npm run build 2>&1 | tee build.log
           echo "[BUILD DEBUG] Build log saved, checking for config debug output..."
           grep -i "NEXT CONFIG DEBUG" build.log || echo "No config debug output found"
+          echo "[BUILD DEBUG] Checking if env vars are in built bundle..."
+          find .next -name "*.js" -type f | head -5 | xargs grep -l "NEXT_PUBLIC_CAMERA_STREAM_URL" 2>/dev/null | head -1 | xargs grep -o "NEXT_PUBLIC_CAMERA_STREAM_URL[^\"']*" | head -1 || echo "Env var not found in bundle"
+          echo "[BUILD DEBUG] Checking standalone output for env vars..."
+          find .next/standalone -name "*.js" -type f 2>/dev/null | head -5 | while read file; do
+            if grep -q "NEXT_PUBLIC_CAMERA_STREAM_URL" "$file" 2>/dev/null; then
+              echo "[BUILD DEBUG] Found in: $file"
+              grep -o "NEXT_PUBLIC_CAMERA_STREAM_URL[^\"']*" "$file" | head -1
+            fi
+          done || echo "No NEXT_PUBLIC vars found in standalone bundle"
           echo "[BUILD DEBUG] ===== BUILD COMPLETE ======"
           # Standalone output does not include public/ or static assets by default.
           # We manually copy them into the standalone folder to create a complete artifact.
