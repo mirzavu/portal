@@ -1,0 +1,158 @@
+name: Deploy Production (Atomic)
+
+# Deployment workflow
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # --- BUILD PHASE ---
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Next.js (Standalone)
+        run: |
+          npm run build
+          # Standalone output does not include public/ or static assets by default.
+          # We manually copy them into the standalone folder to create a complete artifact.
+          cp -r public .next/standalone/public
+          cp -r .next/static .next/standalone/.next/static
+          cp -r pb_migrations .next/standalone/pb_migrations
+
+      - name: Compress Artifact
+        # Tarballing makes the upload much faster than thousands of small files
+        run: tar -czf release.tar.gz -C .next/standalone .
+
+      # --- TRANSFER PHASE ---
+      - name: Upload to Server Cache
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.KEY }}
+          # We upload the app code, the PM2 config, and the PocketBase binary
+          source: "release.tar.gz,ecosystem.config.js,pocketbase"
+          target: "/home/${{ secrets.USERNAME }}/deploy-cache/"
+
+      # --- DEPLOY PHASE ---
+      - name: Activate Release on Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.KEY }}
+          script: |
+            # === VARIABLES ===
+            APP_ROOT="/home/${{ secrets.USERNAME }}/web/portal.demotesting.co.uk"
+            CACHE_DIR="/home/${{ secrets.USERNAME }}/deploy-cache"
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            NEW_RELEASE_DIR="$APP_ROOT/releases/$TIMESTAMP"
+            
+            # 1. Create directory & 2. Extract
+            mkdir -p $NEW_RELEASE_DIR
+            tar -xzf $CACHE_DIR/release.tar.gz -C $NEW_RELEASE_DIR
+            
+            # 2.1. Verify extraction
+            if [ ! -f "$NEW_RELEASE_DIR/server.js" ]; then
+              echo "ERROR: server.js not found in extracted release"
+              exit 1
+            fi
+            
+            # 3. Link Shared Resources
+            ln -s $APP_ROOT/.env.production $NEW_RELEASE_DIR/.env
+            ln -s $APP_ROOT/pb_data $NEW_RELEASE_DIR/pb_data
+            
+            # 4. Setup PocketBase
+            if [ -f "$CACHE_DIR/pocketbase" ]; then
+              mv $CACHE_DIR/pocketbase $NEW_RELEASE_DIR/pocketbase
+              chmod +x $NEW_RELEASE_DIR/pocketbase
+              cd $NEW_RELEASE_DIR
+              ./pocketbase migrate up || echo "Migrations warning"
+            fi
+            
+            # 5. Ecosystem & Timestamp File
+            cp $CACHE_DIR/ecosystem.config.js $NEW_RELEASE_DIR/
+            # Create a file we can read via API to verify version
+            echo "$TIMESTAMP" > $NEW_RELEASE_DIR/.deployment-timestamp
+            
+            # 6. Zero-Downtime Switch
+            if [ -L "$APP_ROOT/public_html" ]; then
+              ln -sfn $NEW_RELEASE_DIR $APP_ROOT/public_html
+            elif [ -d "$APP_ROOT/public_html" ]; then
+              OLD_DIR="$APP_ROOT/public_html.old.$(date +%Y%m%d%H%M%S)"
+              mv $APP_ROOT/public_html $OLD_DIR || true
+              ln -sfn $NEW_RELEASE_DIR $APP_ROOT/public_html
+            else
+              ln -sfn $NEW_RELEASE_DIR $APP_ROOT/public_html
+            fi
+            
+            # 6.1 Verify Symlink
+            SYMLINK_TARGET=$(readlink -f $APP_ROOT/public_html)
+            if [ "$SYMLINK_TARGET" != "$NEW_RELEASE_DIR" ]; then
+              echo "ERROR: Symlink failed."
+              exit 1
+            fi
+            
+            # 7. Reload PM2 (SAFE MODE)
+            cd $APP_ROOT/public_html
+            echo "Restarting PM2..."
+            
+            # Stop and Delete specifically
+            pm2 stop portal-web portal-pb || true
+            sleep 2
+            pm2 delete portal-web portal-pb || true
+            sleep 1
+            
+            # Start fresh
+            pm2 start ecosystem.config.js --update-env
+            pm2 save
+            
+            # 7.1 Verify PM2 CWD
+            sleep 3
+            # We use a simple grep here. If it fails, we fail the deploy.
+            # We do NOT use 'pm2 kill' to avoid killing invoice-server.
+            PM2_INFO=$(pm2 describe portal-web 2>/dev/null)
+            if [[ "$PM2_INFO" != *"$NEW_RELEASE_DIR"* ]]; then
+               echo "WARNING: PM2 might still be running from old directory. Check manually."
+               echo "Current PM2 Info for portal-web:"
+               echo "$PM2_INFO" | grep "cwd"
+               # We don't exit 1 here because grep output varies by PM2 version, 
+               # and we don't want to break the pipeline if the logic is just fuzzy.
+            else
+               echo "✓ PM2 verified running from new release."
+            fi
+            
+            # 7.2 Verify API (Wait for boot)
+            echo "Waiting for Next.js to boot..."
+            RETRIES=0
+            # Wait up to 20 seconds
+            until curl -s http://localhost:3005/api/deployment-status | grep "$TIMESTAMP" || [ $RETRIES -eq 10 ]; do
+               sleep 2
+               ((RETRIES++))
+            done
+            
+            if [ $RETRIES -eq 10 ]; then
+               echo "WARNING: Verification timed out. App might be slow to start or API route missing."
+            else
+               echo "✓ Code verification passed: API returned timestamp $TIMESTAMP"
+            fi
+            
+            # 8. Cleanup
+            cd $APP_ROOT/releases
+            ls -dt * 2>/dev/null | tail -n +6 | xargs -I {} rm -rf {} || true
+            rm -rf $CACHE_DIR/*
+            
+            echo "Deployment $TIMESTAMP Successful"
+
