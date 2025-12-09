@@ -298,14 +298,27 @@ export default function CameraPage() {
       });
 
       hls.on(Hls.Events.ERROR, (event, data) => {
-        console.error('[CAMERA DEBUG] HLS: ERROR event', data);
-        console.error('[CAMERA DEBUG] Error type:', data.type);
-        console.error('[CAMERA DEBUG] Error details:', data.details);
-        console.error('[CAMERA DEBUG] Error fatal?', data.fatal);
-        console.error('[CAMERA DEBUG] Error URL:', data.url);
-        console.error('[CAMERA DEBUG] Error response:', data.response);
+        // Non-fatal errors (like bufferStalledError) are expected in live streaming
+        // and are automatically handled by HLS.js - log them as warnings, not errors
+        const isNonFatalBufferStall = !data.fatal && data.details === 'bufferStalledError';
         
+        if (isNonFatalBufferStall) {
+          // Silently ignore non-fatal buffer stalls - they're normal and auto-recovered
+          console.log('[CAMERA DEBUG] HLS: Non-fatal buffer stall (auto-recovering)', {
+            type: data.type,
+            details: data.details,
+            position: data.stalled?.start
+          });
+          return; // Don't process further - let HLS.js handle recovery
+        }
+        
+        // Log other errors appropriately based on severity
         if (data.fatal) {
+          console.error('[CAMERA DEBUG] HLS: FATAL ERROR event', data);
+          console.error('[CAMERA DEBUG] Error type:', data.type);
+          console.error('[CAMERA DEBUG] Error details:', data.details);
+          console.error('[CAMERA DEBUG] Error URL:', data.url);
+          console.error('[CAMERA DEBUG] Error response:', data.response);
           console.error('[CAMERA DEBUG] HLS fatal error:', data.type, data.details);
           
           // Clear timeout on fatal error
@@ -352,6 +365,14 @@ export default function CameraPage() {
               hls.destroy();
               break;
           }
+        } else {
+          // Other non-fatal errors (not buffer stalls) - log as warnings but don't show to user
+          console.warn('[CAMERA DEBUG] HLS: Non-fatal error (auto-recovering)', {
+            type: data.type,
+            details: data.details,
+            fatal: data.fatal
+          });
+          // HLS.js will handle recovery automatically, no user action needed
         }
       });
     } else {
