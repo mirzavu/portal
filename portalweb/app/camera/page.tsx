@@ -8,14 +8,35 @@ export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const statusRef = useRef<'loading' | 'playing' | 'error' | 'no-url'>('loading');
-  const [streamStatus, setStreamStatus] = useState<'loading' | 'playing' | 'error' | 'no-url'>('loading');
+  const statusRef = useRef<'loading' | 'playing' | 'error' | 'no-url' | 'ready'>('loading');
+  const [streamStatus, setStreamStatus] = useState<'loading' | 'playing' | 'error' | 'no-url' | 'ready'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isPlaying, setIsPlaying] = useState(false);
   
   // Helper to update status and ref together
-  const updateStreamStatus = (status: 'loading' | 'playing' | 'error' | 'no-url') => {
+  const updateStreamStatus = (status: 'loading' | 'playing' | 'error' | 'no-url' | 'ready') => {
     statusRef.current = status;
     setStreamStatus(status);
+  };
+
+  // Handle play button click
+  const handlePlayClick = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    try {
+      await video.play();
+      setIsPlaying(true);
+      updateStreamStatus('playing');
+    } catch (err: any) {
+      console.error('[CAMERA DEBUG] Error playing video:', err);
+      if (err.name === 'NotAllowedError') {
+        setErrorMessage('Playback was blocked. Please interact with the page first.');
+      } else {
+        setErrorMessage(`Failed to play stream: ${err.message || 'Unknown error'}`);
+      }
+      updateStreamStatus('error');
+    }
   };
 
   // Stream URL from environment variable (baked at build time)
@@ -81,7 +102,7 @@ export default function CameraPage() {
           clearTimeout(timeoutRef.current);
           timeoutRef.current = null;
         }
-        updateStreamStatus('playing');
+        updateStreamStatus('ready');
       };
       
       const handleCanPlay = () => {
@@ -91,7 +112,7 @@ export default function CameraPage() {
           timeoutRef.current = null;
         }
         if (statusRef.current === 'loading') {
-          updateStreamStatus('playing');
+          updateStreamStatus('ready');
         }
       };
       
@@ -158,13 +179,13 @@ export default function CameraPage() {
         console.log('[CAMERA DEBUG] Native HLS: progress event - loading progress');
         const readyState = video.readyState;
         console.log('[CAMERA DEBUG] Video readyState:', readyState);
-        // If we have enough data to play, consider it loaded
+        // If we have enough data to play, consider it ready
         if (readyState >= 2 && statusRef.current === 'loading') {
           if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
           }
-          updateStreamStatus('playing');
+          updateStreamStatus('ready');
         }
       };
       
@@ -179,11 +200,8 @@ export default function CameraPage() {
       
       video.src = streamUrl;
       
-      // Also try to play immediately
-      video.play().catch((err) => {
-        console.warn('[CAMERA DEBUG] Native HLS: play() failed initially:', err);
-        // Don't set error here, let error event handle it
-      });
+      // Don't autoplay - wait for user to click play button
+      // Video will be ready when metadata loads
       
       return () => {
         if (timeoutRef.current) {
@@ -247,54 +265,38 @@ export default function CameraPage() {
         const handleCanPlay = () => {
           console.log('[CAMERA DEBUG] HLS: canplay event - stream is ready');
           if (statusRef.current === 'loading') {
-            updateStreamStatus('playing');
+            updateStreamStatus('ready');
           }
         };
         
         const handlePlaying = () => {
           console.log('[CAMERA DEBUG] HLS: playing event - video started playing');
-          if (statusRef.current === 'loading') {
+          setIsPlaying(true);
+          if (statusRef.current === 'ready' || statusRef.current === 'loading') {
             updateStreamStatus('playing');
           }
         };
         
+        const handlePause = () => {
+          console.log('[CAMERA DEBUG] HLS: pause event - video paused');
+          setIsPlaying(false);
+        };
+        
         video.addEventListener('canplay', handleCanPlay, { once: true });
-        video.addEventListener('playing', handlePlaying, { once: true });
+        video.addEventListener('playing', handlePlaying);
+        video.addEventListener('pause', handlePause);
         
         // Also listen for loadeddata as a fallback
         const handleLoadedData = () => {
           console.log('[CAMERA DEBUG] HLS: loadeddata event - enough data loaded');
           if (statusRef.current === 'loading') {
-            updateStreamStatus('playing');
+            updateStreamStatus('ready');
           }
         };
         video.addEventListener('loadeddata', handleLoadedData, { once: true });
         
-        // Try to play, but don't treat autoplay failure as fatal error
-        video.play().then(() => {
-          console.log('[CAMERA DEBUG] Video play() succeeded - autoplay worked');
-          updateStreamStatus('playing');
-        }).catch((err) => {
-          // Autoplay restrictions are not fatal - stream is loaded, user can click play
-          if (err.name === 'NotAllowedError') {
-            console.warn('[CAMERA DEBUG] Autoplay blocked by browser (this is normal)');
-            console.log('[CAMERA DEBUG] Stream is loaded and ready - user can click play button');
-            // Don't set error - stream is ready, just needs user interaction
-            // The canplay/loadeddata events will set status to playing when ready
-            // But also set it now so video is visible immediately
-            setTimeout(() => {
-              if (statusRef.current === 'loading') {
-                console.log('[CAMERA DEBUG] Setting status to playing after autoplay block');
-                updateStreamStatus('playing');
-              }
-            }, 1000); // Give a moment for buffering to start
-          } else {
-            // Other errors are still problematic
-            console.error('[CAMERA DEBUG] Error playing video:', err);
-            updateStreamStatus('error');
-            setErrorMessage(`Failed to play stream: ${err.message || 'Unknown error'}`);
-          }
-        });
+        // Don't autoplay - wait for user to click play button
+        console.log('[CAMERA DEBUG] Stream is loaded and ready - waiting for user to click play');
       });
 
       hls.on(Hls.Events.ERROR, (event, data) => {
@@ -467,20 +469,23 @@ export default function CameraPage() {
             </div>
           )}
 
-          {/* Always render video element so ref is available, but show loading overlay when needed */}
+          {/* Always render video element so ref is available, but show loading/play overlay when needed */}
           <div className="relative w-full bg-black rounded overflow-hidden">
             <video
               ref={videoRef}
-              className={`w-full h-auto ${streamStatus === 'playing' ? '' : 'opacity-0 absolute'}`}
+              className={`w-full h-auto ${streamStatus === 'playing' || streamStatus === 'ready' ? '' : 'opacity-0 absolute'}`}
               controls
               playsInline
               muted={false}
-              autoPlay
               onPlay={() => {
                 console.log('[CAMERA DEBUG] Video play event - user started playback');
-                if (statusRef.current === 'loading') {
+                setIsPlaying(true);
+                if (statusRef.current === 'loading' || statusRef.current === 'ready') {
                   updateStreamStatus('playing');
                 }
+              }}
+              onPause={() => {
+                setIsPlaying(false);
               }}
             />
             
@@ -488,6 +493,18 @@ export default function CameraPage() {
               <div className="flex flex-col items-center justify-center py-16 relative z-10">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blood shadow-[0_0_20px_rgba(138,3,3,0.5)] mb-4"></div>
                 <p className="text-gray-400 font-mono text-sm">Connecting to stream...</p>
+              </div>
+            )}
+            
+            {streamStatus === 'ready' && !isPlaying && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+                <button
+                  onClick={handlePlayClick}
+                  className="group relative px-8 py-4 bg-blood hover:bg-red-900 text-white font-mono text-sm uppercase transition-all border border-blood/50 shadow-[0_0_20px_rgba(138,3,3,0.5)] hover:shadow-[0_0_30px_rgba(138,3,3,0.7)] flex items-center gap-3"
+                >
+                  <Video className="w-6 h-6" />
+                  <span>Play Stream</span>
+                </button>
               </div>
             )}
           </div>

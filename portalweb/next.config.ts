@@ -8,6 +8,17 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_POCKETBASE_URL: process.env.NEXT_PUBLIC_POCKETBASE_URL,
     NEXT_PUBLIC_PIN_CODE: process.env.NEXT_PUBLIC_PIN_CODE,
   },
+  webpack: (config, { webpack }) => {
+    // Exclude pocketbase binary from webpack processing
+    config.plugins = config.plugins || [];
+    config.plugins.push(
+      new webpack.IgnorePlugin({
+        resourceRegExp: /^\.\/pocketbase$/,
+        contextRegExp: /.*/,
+      })
+    );
+    return config;
+  },
 };
 
 // Debug logging during config load
