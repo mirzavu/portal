@@ -43,14 +43,20 @@ String urlEncode(String s);
 
 // ESP-NOW Callback
 void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
+  Serial.printf("RAW RX: len=%d, type=%d\n", len, len > 0 ? data[0] : -1);
+  
   if (len == sizeof(DoorKnockMessage)) {
-    if (xSemaphoreTake(pktMutex, 0) == pdTRUE) {
+    if (xSemaphoreTake(pktMutex, 10 / portTICK_PERIOD_MS) == pdTRUE) {
       memcpy(&pkt, data, sizeof(DoorKnockMessage));
       newPacket = true;
       xSemaphoreGive(pktMutex);
+      Serial.println("✓ Packet queued for processing");
+    } else {
+      Serial.println("⚠️  Mutex timeout - packet dropped!");
     }
+  } else {
+    Serial.printf("⚠️  Invalid packet length: expected %d, got %d\n", sizeof(DoorKnockMessage), len);
   }
-  Serial.printf("RAW RX: len=%d, type=%d\n", len, data[0]);
 }
 
 void setup() {
@@ -109,7 +115,11 @@ void setup() {
   // Register receive callback
   esp_now_register_recv_cb(onRecv);
   
+  // CRITICAL: Set ESP-NOW to long range mode for better reliability
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  
   Serial.println("\n=== Gateway Ready & Listening on Channel 11 ===\n");
+  Serial.printf("Listening for packets (struct size: %d bytes)...\n\n", sizeof(DoorKnockMessage));
 }
 
 void loop() {
@@ -241,22 +251,30 @@ void sendDoorKnockAPI(String macAddress) {
     return;
   }
 
-  WiFiClient client;
+  // TESTING MODE: Use HTTP for local server
+  // WiFiClientSecure client;
+  // client.setInsecure();
+  WiFiClient client; // Use regular WiFi client for HTTP
   HTTPClient http;
 
   Serial.print("Calling Door Knock API... ");
-  // if (!http.begin(client, "https://portal.demotesting.co.uk/api/door-knock")) {
-  if (!http.begin(client, "http://192.168.29.174:8080/api/door-knock")) { // Change IP to your laptop!
+  
+  // TESTING: Replace with your laptop's IP address
+  if (!http.begin(client, "http://192.168.29.15:8080/api/door-knock")) { // Change IP to your laptop!
     Serial.println("FAILED to begin HTTP");
     return;
   }
   
   http.addHeader("Content-Type", "application/json");
+
+  // Get current timestamp (seconds since boot + rough epoch)
+  unsigned long timestamp = 1735123456 + (millis() / 1000); // Rough timestamp
   
-  // Build JSON body (timestamp will be generated server-side)
+  // Build JSON body
   String jsonBody = "{";
   jsonBody += "\"mac\":\"" + macAddress + "\",";
-  jsonBody += "\"knock_count\":1";
+  jsonBody += "\"knock_count\":1,";
+  jsonBody += "\"timestamp\":" + String(timestamp);
   jsonBody += "}";
 
   Serial.println();
