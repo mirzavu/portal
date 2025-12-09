@@ -68,8 +68,14 @@ void sendPacket(uint8_t type) {
   
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  
+  // CRITICAL: Set channel BEFORE initializing ESP-NOW
   wifi_set_channel(CHANNEL);
-  delay(10); // Allow radio to stabilize
+  
+  // POWER OPTIMIZATION: Reduce TX power if gateway is nearby (<20m)
+  WiFi.setOutputPower(20); // Increased back to max for reliability
+  
+  delay(50); // Increased delay for radio stabilization
 
   if (esp_now_init() != 0) {
     Serial.println("ESP-NOW Init Failed");
@@ -80,6 +86,9 @@ void sendPacket(uint8_t type) {
   esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
   esp_now_add_peer(gatewayAddress, ESP_NOW_ROLE_SLAVE, CHANNEL, NULL, 0);
 
+  // Add small delay after peer registration
+  delay(10);
+
   FullMessage m;
   m.type = type;
   m.random_id = random(10000, 99999);
@@ -89,29 +98,40 @@ void sendPacket(uint8_t type) {
   Serial.print(type);
   Serial.print(" (");
   Serial.print(type == 1 ? "KNOCK" : "HEARTBEAT");
-  Serial.print(") | Voltage: ");
+  Serial.print(") | ID: ");
+  Serial.print(m.random_id);
+  Serial.print(" | Voltage: ");
   Serial.println(m.voltage);
 
-  // Try sending a few times
-  for (int i = 0; i < 3; i++) {
+  // CRITICAL FIX: Send multiple times with delays for reliability
+  bool success = false;
+  for (int i = 0; i < 3; i++) { // Back to 3 retries
     lastSendStatus = 255;
     esp_now_send(gatewayAddress, (uint8_t*)&m, sizeof(m));
     
-    // Wait for callback
+    // Wait for callback with longer timeout
     unsigned long start = millis();
-    while (millis() - start < 100 && lastSendStatus == 255) {
+    while (millis() - start < 200 && lastSendStatus == 255) { // Increased to 200ms
       yield();
     }
     
     if (lastSendStatus == 0) {
       Serial.println("✓ Delivery Success");
+      success = true;
+      
+      // CRITICAL: Add delay even on success to ensure packet is processed
+      delay(50);
       break;
     } else {
       Serial.print("✗ Delivery Failed, Retry ");
       Serial.print(i + 1);
       Serial.println("/3");
-      delay(10);
+      delay(50); // Increased retry delay
     }
+  }
+  
+  if (!success) {
+    Serial.println("⚠️  All retries failed!");
   }
 
   esp_now_deinit();
