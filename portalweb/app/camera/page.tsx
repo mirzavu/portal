@@ -1,19 +1,31 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Video, AlertCircle, Radio } from 'lucide-react';
+import { Video, AlertCircle } from 'lucide-react';
 import Hls from 'hls.js';
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const statusRef = useRef<'loading' | 'playing' | 'error' | 'no-url'>('loading');
   const [streamStatus, setStreamStatus] = useState<'loading' | 'playing' | 'error' | 'no-url'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  
+  // Helper to update status and ref together
+  const updateStreamStatus = (status: 'loading' | 'playing' | 'error' | 'no-url') => {
+    statusRef.current = status;
+    setStreamStatus(status);
+  };
 
   // Stream URL from environment variable (baked at build time)
   const streamUrl = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL;
 
   useEffect(() => {
+    // Initialize status ref
+    statusRef.current = 'loading';
+    updateStreamStatus('loading');
+    
     console.log('[CAMERA DEBUG] ===== CAMERA PAGE LOADED =====');
     console.log('[CAMERA DEBUG] streamUrl:', streamUrl);
     console.log('[CAMERA DEBUG] streamUrl type:', typeof streamUrl);
@@ -28,7 +40,7 @@ export default function CameraPage() {
     
     if (!streamUrl) {
       console.log('[CAMERA DEBUG] No stream URL - setting status to no-url');
-      setStreamStatus('no-url');
+      updateStreamStatus('no-url');
       return;
     }
 
@@ -40,40 +52,165 @@ export default function CameraPage() {
       return;
     }
 
+    // Setup loading timeout (15 seconds)
+    const LOADING_TIMEOUT = 15000;
+    timeoutRef.current = setTimeout(() => {
+      if (statusRef.current === 'loading') {
+        console.error('[CAMERA DEBUG] Loading timeout - stream did not connect within 15 seconds');
+        updateStreamStatus('error');
+        setErrorMessage('Stream connection timeout. The stream may be unavailable or taking too long to load.');
+      }
+    }, LOADING_TIMEOUT);
+
     // Check if browser supports native HLS (Safari, iOS)
     const canPlayNativeHLS = video.canPlayType('application/vnd.apple.mpegurl');
     console.log('[CAMERA DEBUG] Native HLS support:', canPlayNativeHLS);
+    console.log('[CAMERA DEBUG] Native HLS support type:', typeof canPlayNativeHLS);
     
-    if (canPlayNativeHLS) {
-      console.log('[CAMERA DEBUG] Using native HLS playback');
+    // Try native HLS first if browser reports "probably" (definite support)
+    // If browser reports "maybe" (uncertain) or "" (no support), fall through to HLS.js
+    if (canPlayNativeHLS === 'probably') {
+      console.log('[CAMERA DEBUG] Using native HLS playback (probably supported)');
       console.log('[CAMERA DEBUG] Setting video.src to:', streamUrl);
-      video.src = streamUrl;
+      
+      let nativeHLSFailed = false;
       
       const handleLoadedMetadata = () => {
-        setStreamStatus('playing');
+        console.log('[CAMERA DEBUG] Native HLS: loadedmetadata event fired');
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        updateStreamStatus('playing');
+      };
+      
+      const handleCanPlay = () => {
+        console.log('[CAMERA DEBUG] Native HLS: canplay event fired');
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        if (statusRef.current === 'loading') {
+          updateStreamStatus('playing');
+        }
       };
       
       const handleError = (e: Event) => {
         const videoError = video.error;
-        console.error('[CAMERA] Native HLS error:', videoError?.code, videoError?.message);
-        setStreamStatus('error');
-        setErrorMessage(`Failed to load stream: ${videoError?.message || 'Unknown error'}`);
+        console.error('[CAMERA DEBUG] Native HLS error:', videoError?.code, videoError?.message);
+        console.error('[CAMERA DEBUG] Video error code:', videoError?.code);
+        console.error('[CAMERA DEBUG] Video error message:', videoError?.message);
+        
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        
+        nativeHLSFailed = true;
+        
+        // Map error codes to user-friendly messages
+        let errorMsg = 'Unknown error';
+        if (videoError) {
+          switch (videoError.code) {
+            case 1: // MEDIA_ERR_ABORTED
+              errorMsg = 'Stream loading was aborted';
+              break;
+            case 2: // MEDIA_ERR_NETWORK
+              errorMsg = 'Network error while loading stream';
+              break;
+            case 3: // MEDIA_ERR_DECODE
+              errorMsg = 'Error decoding stream (format may be unsupported)';
+              break;
+            case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+              errorMsg = 'Stream format not supported by browser';
+              break;
+            default:
+              errorMsg = videoError.message || `Error code: ${videoError.code}`;
+          }
+        }
+        
+        updateStreamStatus('error');
+        setErrorMessage(`Failed to load stream: ${errorMsg}`);
+      };
+      
+      const handleStalled = () => {
+        console.warn('[CAMERA DEBUG] Native HLS: stalled event - stream loading stalled');
+      };
+      
+      const handleSuspend = () => {
+        console.warn('[CAMERA DEBUG] Native HLS: suspend event - stream loading suspended');
+      };
+      
+      const handleAbort = () => {
+        console.warn('[CAMERA DEBUG] Native HLS: abort event - stream loading aborted');
+        if (!nativeHLSFailed) {
+          nativeHLSFailed = true;
+          updateStreamStatus('error');
+          setErrorMessage('Stream loading was aborted');
+        }
+      };
+      
+      const handleLoadStart = () => {
+        console.log('[CAMERA DEBUG] Native HLS: loadstart event - started loading');
+      };
+      
+      const handleProgress = () => {
+        console.log('[CAMERA DEBUG] Native HLS: progress event - loading progress');
+        const readyState = video.readyState;
+        console.log('[CAMERA DEBUG] Video readyState:', readyState);
+        // If we have enough data to play, consider it loaded
+        if (readyState >= 2 && statusRef.current === 'loading') {
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+          }
+          updateStreamStatus('playing');
+        }
       };
       
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('canplay', handleCanPlay);
       video.addEventListener('error', handleError);
+      video.addEventListener('stalled', handleStalled);
+      video.addEventListener('suspend', handleSuspend);
+      video.addEventListener('abort', handleAbort);
+      video.addEventListener('loadstart', handleLoadStart);
+      video.addEventListener('progress', handleProgress);
+      
+      video.src = streamUrl;
+      
+      // Also try to play immediately
+      video.play().catch((err) => {
+        console.warn('[CAMERA DEBUG] Native HLS: play() failed initially:', err);
+        // Don't set error here, let error event handle it
+      });
       
       return () => {
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('canplay', handleCanPlay);
         video.removeEventListener('error', handleError);
+        video.removeEventListener('stalled', handleStalled);
+        video.removeEventListener('suspend', handleSuspend);
+        video.removeEventListener('abort', handleAbort);
+        video.removeEventListener('loadstart', handleLoadStart);
+        video.removeEventListener('progress', handleProgress);
       };
     }
 
-    // Use hls.js for browsers that don't support native HLS
+    // Use hls.js for browsers that don't support native HLS or if native HLS only reports "maybe"
     const hlsSupported = Hls.isSupported();
     console.log('[CAMERA DEBUG] HLS.js supported?', hlsSupported);
     
     if (hlsSupported) {
+      // Clear timeout if we're using HLS.js (it will be set again after manifest loads)
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
       console.log('[CAMERA DEBUG] Creating HLS instance');
       console.log('[CAMERA DEBUG] Loading source:', streamUrl);
       const hls = new Hls({
@@ -99,13 +236,64 @@ export default function CameraPage() {
       hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
         console.log('[CAMERA DEBUG] HLS: MANIFEST_PARSED event', data);
         console.log('[CAMERA DEBUG] Attempting to play video');
+        
+        // Clear loading timeout since manifest is loaded
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        
+        // Listen for when enough data is buffered to play
+        const handleCanPlay = () => {
+          console.log('[CAMERA DEBUG] HLS: canplay event - stream is ready');
+          if (statusRef.current === 'loading') {
+            updateStreamStatus('playing');
+          }
+        };
+        
+        const handlePlaying = () => {
+          console.log('[CAMERA DEBUG] HLS: playing event - video started playing');
+          if (statusRef.current === 'loading') {
+            updateStreamStatus('playing');
+          }
+        };
+        
+        video.addEventListener('canplay', handleCanPlay, { once: true });
+        video.addEventListener('playing', handlePlaying, { once: true });
+        
+        // Also listen for loadeddata as a fallback
+        const handleLoadedData = () => {
+          console.log('[CAMERA DEBUG] HLS: loadeddata event - enough data loaded');
+          if (statusRef.current === 'loading') {
+            updateStreamStatus('playing');
+          }
+        };
+        video.addEventListener('loadeddata', handleLoadedData, { once: true });
+        
+        // Try to play, but don't treat autoplay failure as fatal error
         video.play().then(() => {
-          console.log('[CAMERA DEBUG] Video play() succeeded');
-          setStreamStatus('playing');
+          console.log('[CAMERA DEBUG] Video play() succeeded - autoplay worked');
+          updateStreamStatus('playing');
         }).catch((err) => {
-          console.error('[CAMERA DEBUG] Error playing video:', err);
-          setStreamStatus('error');
-          setErrorMessage(`Failed to play stream: ${err.message}`);
+          // Autoplay restrictions are not fatal - stream is loaded, user can click play
+          if (err.name === 'NotAllowedError') {
+            console.warn('[CAMERA DEBUG] Autoplay blocked by browser (this is normal)');
+            console.log('[CAMERA DEBUG] Stream is loaded and ready - user can click play button');
+            // Don't set error - stream is ready, just needs user interaction
+            // The canplay/loadeddata events will set status to playing when ready
+            // But also set it now so video is visible immediately
+            setTimeout(() => {
+              if (statusRef.current === 'loading') {
+                console.log('[CAMERA DEBUG] Setting status to playing after autoplay block');
+                updateStreamStatus('playing');
+              }
+            }, 1000); // Give a moment for buffering to start
+          } else {
+            // Other errors are still problematic
+            console.error('[CAMERA DEBUG] Error playing video:', err);
+            updateStreamStatus('error');
+            setErrorMessage(`Failed to play stream: ${err.message || 'Unknown error'}`);
+          }
         });
       });
 
@@ -114,22 +302,53 @@ export default function CameraPage() {
         console.error('[CAMERA DEBUG] Error type:', data.type);
         console.error('[CAMERA DEBUG] Error details:', data.details);
         console.error('[CAMERA DEBUG] Error fatal?', data.fatal);
+        console.error('[CAMERA DEBUG] Error URL:', data.url);
+        console.error('[CAMERA DEBUG] Error response:', data.response);
+        
         if (data.fatal) {
           console.error('[CAMERA DEBUG] HLS fatal error:', data.type, data.details);
+          
+          // Clear timeout on fatal error
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+          }
+          
+          let errorMsg = '';
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              setStreamStatus('error');
-              setErrorMessage(`Network error: ${data.details || 'Failed to load stream'}`);
-              hls.startLoad();
+              errorMsg = `Network error: ${data.details || 'Failed to load stream'}`;
+              if (data.response?.code === 404) {
+                errorMsg = 'Stream not found (404). The stream URL may be incorrect.';
+              } else if (data.response?.code === 403) {
+                errorMsg = 'Access forbidden (403). Check stream authentication.';
+              } else if (data.response?.code) {
+                errorMsg = `Network error (HTTP ${data.response.code}): ${data.details || 'Failed to load stream'}`;
+              }
+              updateStreamStatus('error');
+              setErrorMessage(errorMsg);
+              // Try to recover from network errors
+              try {
+                hls.startLoad();
+              } catch (e) {
+                console.error('[CAMERA DEBUG] Failed to restart HLS:', e);
+              }
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              setStreamStatus('error');
-              setErrorMessage(`Media error: ${data.details || 'Failed to decode stream'}`);
-              hls.recoverMediaError();
+              errorMsg = `Media error: ${data.details || 'Failed to decode stream'}`;
+              updateStreamStatus('error');
+              setErrorMessage(errorMsg);
+              // Try to recover from media errors
+              try {
+                hls.recoverMediaError();
+              } catch (e) {
+                console.error('[CAMERA DEBUG] Failed to recover from media error:', e);
+              }
               break;
             default:
-              setStreamStatus('error');
-              setErrorMessage(`Stream error: ${data.details || 'Unknown error'}`);
+              errorMsg = `Stream error: ${data.details || 'Unknown error'}`;
+              updateStreamStatus('error');
+              setErrorMessage(errorMsg);
               hls.destroy();
               break;
           }
@@ -137,12 +356,23 @@ export default function CameraPage() {
       });
     } else {
       console.error('[CAMERA DEBUG] HLS.js is not supported in this browser');
-      setStreamStatus('error');
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      updateStreamStatus('error');
       setErrorMessage('HLS is not supported in this browser');
     }
 
     return () => {
       console.log('[CAMERA DEBUG] Cleanup function called');
+      
+      // Clear timeout on cleanup
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      
       if (hlsRef.current) {
         console.log('[CAMERA DEBUG] Destroying HLS instance');
         hlsRef.current.destroy();
@@ -225,21 +455,18 @@ export default function CameraPage() {
               playsInline
               muted={false}
               autoPlay
+              onPlay={() => {
+                console.log('[CAMERA DEBUG] Video play event - user started playback');
+                if (statusRef.current === 'loading') {
+                  updateStreamStatus('playing');
+                }
+              }}
             />
             
             {streamStatus === 'loading' && (
               <div className="flex flex-col items-center justify-center py-16 relative z-10">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blood shadow-[0_0_20px_rgba(138,3,3,0.5)] mb-4"></div>
                 <p className="text-gray-400 font-mono text-sm">Connecting to stream...</p>
-              </div>
-            )}
-            
-            {streamStatus === 'playing' && (
-              <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 bg-black/70 backdrop-blur-sm rounded border border-red-600/50 z-10">
-                <Radio className="w-3 h-3 text-red-500" />
-                <span className="text-red-500 font-mono text-[10px] uppercase tracking-wider">
-                  LIVE FEED
-                </span>
               </div>
             )}
           </div>
