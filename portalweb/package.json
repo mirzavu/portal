@@ -6,7 +6,7 @@
     "dev": "next dev -p 3005 --webpack",
     "pb": "./pocketbase serve --http=127.0.0.1:8095",
     "dev:all": "concurrently \"npm run pb\" \"npm run dev\" --names \"PB,NEXT\" --prefix-colors \"blue,magenta\"",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint"
   },
