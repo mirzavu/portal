@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Video, AlertCircle } from 'lucide-react';
+import { Video, AlertCircle, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square, Eye, EyeOff, Moon, Sun, Loader2, User, Lightbulb, Move, Zap } from 'lucide-react';
 import Hls from 'hls.js';
 
 export default function CameraPage() {
@@ -12,6 +12,17 @@ export default function CameraPage() {
   const [streamStatus, setStreamStatus] = useState<'loading' | 'playing' | 'error' | 'no-url' | 'ready'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Camera control states
+  const [controlLoading, setControlLoading] = useState<string | null>(null);
+  const [controlMessage, setControlMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [privacyMode, setPrivacyMode] = useState<boolean>(false);
+  const [nightVision, setNightVision] = useState<boolean>(false);
+  const [dayNight, setDayNight] = useState<boolean>(false);
+  const [personDetection, setPersonDetection] = useState<boolean>(false);
+  const [led, setLed] = useState<boolean>(false);
+  const [autotrack, setAutotrack] = useState<boolean>(false);
+  const [motion, setMotion] = useState<boolean>(false);
   
   // Helper to update status and ref together
   const updateStreamStatus = (status: 'loading' | 'playing' | 'error' | 'no-url' | 'ready') => {
@@ -37,6 +48,104 @@ export default function CameraPage() {
       }
       updateStreamStatus('error');
     }
+  };
+
+  // Camera control functions
+  const sendCameraCommand = async (endpoint: string, commandName: string) => {
+    if (controlLoading) return; // Prevent multiple simultaneous requests
+    
+    setControlLoading(commandName);
+    setControlMessage(null);
+
+    try {
+      const response = await fetch(`/api/camera/control?endpoint=${encodeURIComponent(endpoint)}`, {
+        method: 'POST',
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setControlMessage({ type: 'success', text: `${commandName} command sent successfully` });
+        
+        // Update state for toggle commands
+        if (endpoint === '/privacy/on') setPrivacyMode(true);
+        if (endpoint === '/privacy/off') setPrivacyMode(false);
+        if (endpoint === '/night/on') setNightVision(true);
+        if (endpoint === '/night/off') setNightVision(false);
+        if (endpoint === '/daynight/on') setDayNight(true);
+        if (endpoint === '/daynight/off') setDayNight(false);
+        if (endpoint === '/person/on') setPersonDetection(true);
+        if (endpoint === '/person/off') setPersonDetection(false);
+        if (endpoint === '/led/on') setLed(true);
+        if (endpoint === '/led/off') setLed(false);
+        if (endpoint === '/autotrack/on') setAutotrack(true);
+        if (endpoint === '/autotrack/off') setAutotrack(false);
+        if (endpoint === '/motion/on') setMotion(true);
+        if (endpoint === '/motion/off') setMotion(false);
+      } else {
+        setControlMessage({ type: 'error', text: data.error || `Failed to send ${commandName} command` });
+      }
+    } catch (error: any) {
+      console.error(`[CAMERA CONTROL] Error sending ${commandName}:`, error);
+      setControlMessage({ 
+        type: 'error', 
+        text: `Network error: ${error.message || 'Cannot connect to camera device'}` 
+      });
+    } finally {
+      setControlLoading(null);
+      // Clear message after 3 seconds
+      setTimeout(() => setControlMessage(null), 3000);
+    }
+  };
+
+  const handlePTZCommand = (direction: 'up' | 'down' | 'left' | 'right' | 'stop') => {
+    const endpoints = {
+      up: '/ptz/up',
+      down: '/ptz/down',
+      left: '/ptz/left',
+      right: '/ptz/right',
+      stop: '/ptz/stop',
+    };
+    sendCameraCommand(endpoints[direction], `PTZ ${direction.charAt(0).toUpperCase() + direction.slice(1)}`);
+  };
+
+  const handlePrivacyToggle = () => {
+    const endpoint = privacyMode ? '/privacy/off' : '/privacy/on';
+    sendCameraCommand(endpoint, `Privacy ${privacyMode ? 'Off' : 'On'}`);
+  };
+
+  const handleNightVisionToggle = () => {
+    const endpoint = nightVision ? '/night/off' : '/night/on';
+    sendCameraCommand(endpoint, `Night Vision ${nightVision ? 'Off' : 'On'}`);
+  };
+
+  const handlePreset = (presetId: number) => {
+    sendCameraCommand(`/preset/${presetId}`, `Preset ${presetId}`);
+  };
+
+  const handleDayNightToggle = () => {
+    const endpoint = dayNight ? '/daynight/off' : '/daynight/on';
+    sendCameraCommand(endpoint, `Day/Night ${dayNight ? 'Off' : 'On'}`);
+  };
+
+  const handlePersonToggle = () => {
+    const endpoint = personDetection ? '/person/off' : '/person/on';
+    sendCameraCommand(endpoint, `Person Detection ${personDetection ? 'Off' : 'On'}`);
+  };
+
+  const handleLedToggle = () => {
+    const endpoint = led ? '/led/off' : '/led/on';
+    sendCameraCommand(endpoint, `LED ${led ? 'Off' : 'On'}`);
+  };
+
+  const handleAutotrackToggle = () => {
+    const endpoint = autotrack ? '/autotrack/off' : '/autotrack/on';
+    sendCameraCommand(endpoint, `Auto Track ${autotrack ? 'Off' : 'On'}`);
+  };
+
+  const handleMotionToggle = () => {
+    const endpoint = motion ? '/motion/off' : '/motion/on';
+    sendCameraCommand(endpoint, `Motion ${motion ? 'Off' : 'On'}`);
   };
 
   // Stream URL from environment variable (baked at build time)
@@ -530,6 +639,322 @@ export default function CameraPage() {
           </div>
         </div>
       )}
+
+      {/* Camera Controls Card */}
+      <div className="mt-6 bg-charcoal/50 border border-gray-800 p-1 relative group">
+        {/* Decorative corners */}
+        <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-blood"></div>
+        <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-blood"></div>
+        
+        <div className="bg-black/80 p-6 backdrop-blur-sm">
+          <div className="mb-4">
+            <h3 className="text-blood font-mono uppercase tracking-widest text-xs mb-1">
+              Camera Controls
+            </h3>
+            <p className="text-gray-500 font-mono text-xs">
+              PTZ movement, privacy mode, night vision, and preset positions
+            </p>
+          </div>
+
+          {/* Control Message Feedback */}
+          {controlMessage && (
+            <div className={`mb-4 p-3 border rounded ${
+              controlMessage.type === 'success' 
+                ? 'bg-green-900/20 border-green-600/50 text-green-400' 
+                : 'bg-red-900/20 border-red-600/50 text-red-400'
+            }`}>
+              <p className="font-mono text-xs">{controlMessage.text}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* PTZ Controls */}
+            <div className="space-y-4">
+              <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">PTZ Movement</h4>
+              <div className="flex flex-col items-center gap-2">
+                {/* Up Button */}
+                <button
+                  onClick={() => handlePTZCommand('up')}
+                  disabled={!!controlLoading}
+                  className="w-16 h-16 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center group"
+                >
+                  {controlLoading === 'PTZ Up' ? (
+                    <Loader2 className="w-6 h-6 animate-spin text-gold" />
+                  ) : (
+                    <ArrowUp className="w-6 h-6 group-hover:text-gold transition-colors" />
+                  )}
+                </button>
+                
+                {/* Middle Row: Left, Stop, Right */}
+                <div className="flex gap-2 items-center">
+                  <button
+                    onClick={() => handlePTZCommand('left')}
+                    disabled={!!controlLoading}
+                    className="w-16 h-16 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center group"
+                  >
+                    {controlLoading === 'PTZ Left' ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-gold" />
+                    ) : (
+                      <ArrowLeft className="w-6 h-6 group-hover:text-gold transition-colors" />
+                    )}
+                  </button>
+                  
+                  <button
+                    onClick={() => handlePTZCommand('stop')}
+                    disabled={!!controlLoading}
+                    className="w-16 h-16 bg-blood/20 hover:bg-blood/40 border border-blood/50 hover:border-blood text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center group"
+                  >
+                    {controlLoading === 'PTZ Stop' ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                    ) : (
+                      <Square className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    )}
+                  </button>
+                  
+                  <button
+                    onClick={() => handlePTZCommand('right')}
+                    disabled={!!controlLoading}
+                    className="w-16 h-16 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center group"
+                  >
+                    {controlLoading === 'PTZ Right' ? (
+                      <Loader2 className="w-6 h-6 animate-spin text-gold" />
+                    ) : (
+                      <ArrowRight className="w-6 h-6 group-hover:text-gold transition-colors" />
+                    )}
+                  </button>
+                </div>
+                
+                {/* Down Button */}
+                <button
+                  onClick={() => handlePTZCommand('down')}
+                  disabled={!!controlLoading}
+                  className="w-16 h-16 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center group"
+                >
+                  {controlLoading === 'PTZ Down' ? (
+                    <Loader2 className="w-6 h-6 animate-spin text-gold" />
+                  ) : (
+                    <ArrowDown className="w-6 h-6 group-hover:text-gold transition-colors" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Toggles and Presets */}
+            <div className="space-y-4">
+              {/* Privacy Mode Toggle */}
+              <div>
+                <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">Privacy Mode</h4>
+                <button
+                  onClick={handlePrivacyToggle}
+                  disabled={!!controlLoading}
+                  className={`w-full py-3 px-4 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group ${
+                    privacyMode
+                      ? 'bg-red-900/20 border-red-600/50 hover:border-red-600 text-red-400'
+                      : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                  }`}
+                >
+                  {controlLoading?.includes('Privacy') ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="font-mono text-xs uppercase">Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      {privacyMode ? (
+                        <>
+                          <EyeOff className="w-5 h-5" />
+                          <span className="font-mono text-xs uppercase">Privacy On</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-5 h-5 group-hover:text-gold transition-colors" />
+                          <span className="font-mono text-xs uppercase">Privacy Off</span>
+                        </>
+                      )}
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Night Vision Toggle */}
+              <div>
+                <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">Night Vision</h4>
+                <button
+                  onClick={handleNightVisionToggle}
+                  disabled={!!controlLoading}
+                  className={`w-full py-3 px-4 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group ${
+                    nightVision
+                      ? 'bg-blue-900/20 border-blue-600/50 hover:border-blue-600 text-blue-400'
+                      : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                  }`}
+                >
+                  {controlLoading?.includes('Night Vision') ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="font-mono text-xs uppercase">Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      {nightVision ? (
+                        <>
+                          <Sun className="w-5 h-5" />
+                          <span className="font-mono text-xs uppercase">Night Vision On</span>
+                        </>
+                      ) : (
+                        <>
+                          <Moon className="w-5 h-5 group-hover:text-gold transition-colors" />
+                          <span className="font-mono text-xs uppercase">Night Vision Off</span>
+                        </>
+                      )}
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Presets */}
+              <div>
+                <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">Preset Positions</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handlePreset(1)}
+                    disabled={!!controlLoading}
+                    className="py-3 px-4 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
+                  >
+                    {controlLoading === 'Preset 1' ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-gold" />
+                    ) : (
+                      <>
+                        <span className="font-mono text-xs">1</span>
+                        <span className="font-mono text-xs uppercase">Preset</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handlePreset(2)}
+                    disabled={!!controlLoading}
+                    className="py-3 px-4 bg-charcoal hover:bg-gray-800 border border-gray-700 hover:border-gold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
+                  >
+                    {controlLoading === 'Preset 2' ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-gold" />
+                    ) : (
+                      <>
+                        <span className="font-mono text-xs">2</span>
+                        <span className="font-mono text-xs uppercase">Preset</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Additional Camera Settings - Compact Grid */}
+          <div className="mt-6 pt-6 border-t border-gray-800">
+            <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-4">Camera Settings</h4>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              {/* Day/Night Mode */}
+              <button
+                onClick={handleDayNightToggle}
+                disabled={!!controlLoading}
+                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
+                  dayNight
+                    ? 'bg-amber-900/20 border-amber-600/50 hover:border-amber-600 text-amber-400'
+                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                }`}
+              >
+                {controlLoading?.includes('Day/Night') ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Sun className={`w-4 h-4 ${!dayNight && 'group-hover:text-gold transition-colors'}`} />
+                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Day/Night</span>
+                  </>
+                )}
+              </button>
+
+              {/* Person Detection */}
+              <button
+                onClick={handlePersonToggle}
+                disabled={!!controlLoading}
+                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
+                  personDetection
+                    ? 'bg-green-900/20 border-green-600/50 hover:border-green-600 text-green-400'
+                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                }`}
+              >
+                {controlLoading?.includes('Person Detection') ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <User className={`w-4 h-4 ${!personDetection && 'group-hover:text-gold transition-colors'}`} />
+                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Person</span>
+                  </>
+                )}
+              </button>
+
+              {/* LED Control */}
+              <button
+                onClick={handleLedToggle}
+                disabled={!!controlLoading}
+                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
+                  led
+                    ? 'bg-yellow-900/20 border-yellow-600/50 hover:border-yellow-600 text-yellow-400'
+                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                }`}
+              >
+                {controlLoading?.includes('LED') ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Lightbulb className={`w-4 h-4 ${!led && 'group-hover:text-gold transition-colors'}`} />
+                    <span className="font-mono text-[10px] uppercase leading-tight text-center">LED</span>
+                  </>
+                )}
+              </button>
+
+              {/* Auto Track */}
+              <button
+                onClick={handleAutotrackToggle}
+                disabled={!!controlLoading}
+                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
+                  autotrack
+                    ? 'bg-purple-900/20 border-purple-600/50 hover:border-purple-600 text-purple-400'
+                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                }`}
+              >
+                {controlLoading?.includes('Auto Track') ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Move className={`w-4 h-4 ${!autotrack && 'group-hover:text-gold transition-colors'}`} />
+                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Auto Track</span>
+                  </>
+                )}
+              </button>
+
+              {/* Motion Detection */}
+              <button
+                onClick={handleMotionToggle}
+                disabled={!!controlLoading}
+                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
+                  motion
+                    ? 'bg-orange-900/20 border-orange-600/50 hover:border-orange-600 text-orange-400'
+                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
+                }`}
+              >
+                {controlLoading?.includes('Motion') ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Zap className={`w-4 h-4 ${!motion && 'group-hover:text-gold transition-colors'}`} />
+                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Motion</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

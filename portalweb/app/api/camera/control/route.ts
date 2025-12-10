@@ -1,0 +1,146 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+const CAMERA_DEVICE_PORT = 5001;
+
+export async function GET(request: NextRequest) {
+  return handleCameraControl(request);
+}
+
+export async function POST(request: NextRequest) {
+  return handleCameraControl(request);
+}
+
+async function handleCameraControl(request: NextRequest) {
+  try {
+    const deviceAddress = process.env.NEXT_PUBLIC_CAMERA_DEVICE_IP;
+    
+    if (!deviceAddress) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Camera device IP not configured. Please set NEXT_PUBLIC_CAMERA_DEVICE_IP environment variable (can be IP like 100.x.x.x or MagicDNS hostname).' 
+        },
+        { status: 500 }
+      );
+    }
+
+    // Parse the URL to get the endpoint path
+    const { searchParams } = new URL(request.url);
+    const endpoint = searchParams.get('endpoint');
+    
+    if (!endpoint) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Missing endpoint parameter. Expected format: ?endpoint=/ptz/up' 
+        },
+        { status: 400 }
+      );
+    }
+
+    // Construct the full URL to the Android device
+    // Supports both IP addresses (100.x.x.x) and MagicDNS hostnames (device.tailnet.ts.net)
+    const deviceUrl = `http://${deviceAddress}:${CAMERA_DEVICE_PORT}${endpoint}`;
+    
+    console.log(`[CAMERA CONTROL] Sending request to: ${deviceUrl}`);
+
+    // Create abort controller for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+    try {
+      // Forward the request to the Android device
+      const response = await fetch(deviceUrl, {
+        method: request.method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error(`[CAMERA CONTROL] Device returned error: ${response.status} - ${errorText}`);
+        
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: `Device returned error: ${response.status} ${response.statusText}`,
+            command: endpoint 
+          },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json().catch(async () => {
+        // If JSON parsing fails, try to get text response
+        const text = await response.text();
+        return { success: true, command: endpoint, response: text };
+      });
+
+      console.log(`[CAMERA CONTROL] Success: ${endpoint}`, data);
+
+      return NextResponse.json({
+        success: data.success !== false, // Default to true if not specified
+        command: data.command || endpoint,
+        error: data.error || undefined,
+      });
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      // Check if it was an abort error (timeout)
+      if (fetchError.name === 'AbortError') {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'Request timeout - device may be unreachable',
+            command: endpoint 
+          },
+          { status: 504 }
+        );
+      }
+      
+      // Re-throw to be handled by outer catch
+      throw fetchError;
+    }
+
+  } catch (error: any) {
+    console.error('[CAMERA CONTROL] Error:', error);
+    
+    // Handle timeout errors (already handled above, but keep for safety)
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Request timeout - device may be unreachable',
+          command: 'unknown' 
+        },
+        { status: 504 }
+      );
+    }
+
+    // Handle network errors
+    if (error.message?.includes('fetch failed') || error.message?.includes('ECONNREFUSED')) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Cannot connect to camera device. Check Tailscale connection and device IP.',
+          command: 'unknown' 
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error.message || 'Unknown error occurred',
+        command: 'unknown' 
+      },
+      { status: 500 }
+    );
+  }
+}
+
