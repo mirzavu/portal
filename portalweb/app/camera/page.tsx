@@ -23,6 +23,7 @@ export default function CameraPage() {
   const [led, setLed] = useState<boolean>(false);
   const [autotrack, setAutotrack] = useState<boolean>(false);
   const [motion, setMotion] = useState<boolean>(false);
+  const [statusLoading, setStatusLoading] = useState<boolean>(true);
   
   // Helper to update status and ref together
   const updateStreamStatus = (status: 'loading' | 'playing' | 'error' | 'no-url' | 'ready') => {
@@ -66,24 +67,17 @@ export default function CameraPage() {
 
       if (data.success) {
         setControlMessage({ type: 'success', text: `${commandName} command sent successfully` });
-        
-        // Update state for toggle commands
-        if (endpoint === '/privacy/on') setPrivacyMode(true);
-        if (endpoint === '/privacy/off') setPrivacyMode(false);
-        if (endpoint === '/night/on') setNightVision(true);
-        if (endpoint === '/night/off') setNightVision(false);
-        if (endpoint === '/daynight/on') setDayNight(true);
-        if (endpoint === '/daynight/off') setDayNight(false);
-        if (endpoint === '/person/on') setPersonDetection(true);
-        if (endpoint === '/person/off') setPersonDetection(false);
-        if (endpoint === '/led/on') setLed(true);
-        if (endpoint === '/led/off') setLed(false);
-        if (endpoint === '/autotrack/on') setAutotrack(true);
-        if (endpoint === '/autotrack/off') setAutotrack(false);
-        if (endpoint === '/motion/on') setMotion(true);
-        if (endpoint === '/motion/off') setMotion(false);
+        // State is already updated optimistically in the toggle handlers
       } else {
         setControlMessage({ type: 'error', text: data.error || `Failed to send ${commandName} command` });
+        // Revert optimistic state update on error
+        if (endpoint === '/privacy/on' || endpoint === '/privacy/off') setPrivacyMode(endpoint === '/privacy/on');
+        if (endpoint === '/night/on' || endpoint === '/night/off') setNightVision(endpoint === '/night/on');
+        if (endpoint === '/daynight/on' || endpoint === '/daynight/off') setDayNight(endpoint === '/daynight/on');
+        if (endpoint === '/person/on' || endpoint === '/person/off') setPersonDetection(endpoint === '/person/on');
+        if (endpoint === '/led/on' || endpoint === '/led/off') setLed(endpoint === '/led/on');
+        if (endpoint === '/autotrack/on' || endpoint === '/autotrack/off') setAutotrack(endpoint === '/autotrack/on');
+        if (endpoint === '/motion/on' || endpoint === '/motion/off') setMotion(endpoint === '/motion/on');
       }
     } catch (error: any) {
       console.error(`[CAMERA CONTROL] Error sending ${commandName}:`, error);
@@ -91,6 +85,14 @@ export default function CameraPage() {
         type: 'error', 
         text: `Network error: ${error.message || 'Cannot connect to camera device'}` 
       });
+      // Revert optimistic state update on error
+      if (endpoint === '/privacy/on' || endpoint === '/privacy/off') setPrivacyMode(endpoint === '/privacy/on');
+      if (endpoint === '/night/on' || endpoint === '/night/off') setNightVision(endpoint === '/night/on');
+      if (endpoint === '/daynight/on' || endpoint === '/daynight/off') setDayNight(endpoint === '/daynight/on');
+      if (endpoint === '/person/on' || endpoint === '/person/off') setPersonDetection(endpoint === '/person/on');
+      if (endpoint === '/led/on' || endpoint === '/led/off') setLed(endpoint === '/led/on');
+      if (endpoint === '/autotrack/on' || endpoint === '/autotrack/off') setAutotrack(endpoint === '/autotrack/on');
+      if (endpoint === '/motion/on' || endpoint === '/motion/off') setMotion(endpoint === '/motion/on');
     } finally {
       setControlLoading(null);
       // Clear message after 3 seconds
@@ -109,47 +111,156 @@ export default function CameraPage() {
     sendCameraCommand(endpoints[direction], `PTZ ${direction.charAt(0).toUpperCase() + direction.slice(1)}`);
   };
 
-  const handlePrivacyToggle = () => {
-    const endpoint = privacyMode ? '/privacy/off' : '/privacy/on';
-    sendCameraCommand(endpoint, `Privacy ${privacyMode ? 'Off' : 'On'}`);
+  const handlePrivacyToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setPrivacyMode(newValue);
+    const endpoint = newValue ? '/privacy/on' : '/privacy/off';
+    sendCameraCommand(endpoint, `Privacy ${newValue ? 'On' : 'Off'}`);
   };
 
-  const handleNightVisionToggle = () => {
-    const endpoint = nightVision ? '/night/off' : '/night/on';
-    sendCameraCommand(endpoint, `Night Vision ${nightVision ? 'Off' : 'On'}`);
+  const handleNightVisionToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setNightVision(newValue);
+    const endpoint = newValue ? '/night/on' : '/night/off';
+    sendCameraCommand(endpoint, `Night Vision ${newValue ? 'On' : 'Off'}`);
   };
 
   const handlePreset = (presetId: number) => {
     sendCameraCommand(`/preset/${presetId}`, `Preset ${presetId}`);
   };
 
-  const handleDayNightToggle = () => {
-    const endpoint = dayNight ? '/daynight/off' : '/daynight/on';
-    sendCameraCommand(endpoint, `Day/Night ${dayNight ? 'Off' : 'On'}`);
+  const handleDayNightToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setDayNight(newValue);
+    const endpoint = newValue ? '/daynight/on' : '/daynight/off';
+    sendCameraCommand(endpoint, `Day/Night ${newValue ? 'On' : 'Off'}`);
   };
 
-  const handlePersonToggle = () => {
-    const endpoint = personDetection ? '/person/off' : '/person/on';
-    sendCameraCommand(endpoint, `Person Detection ${personDetection ? 'Off' : 'On'}`);
+  const handlePersonToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setPersonDetection(newValue);
+    const endpoint = newValue ? '/person/on' : '/person/off';
+    sendCameraCommand(endpoint, `Person Detection ${newValue ? 'On' : 'Off'}`);
   };
 
-  const handleLedToggle = () => {
-    const endpoint = led ? '/led/off' : '/led/on';
-    sendCameraCommand(endpoint, `LED ${led ? 'Off' : 'On'}`);
+  const handleLedToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setLed(newValue);
+    const endpoint = newValue ? '/led/on' : '/led/off';
+    sendCameraCommand(endpoint, `LED ${newValue ? 'On' : 'Off'}`);
   };
 
-  const handleAutotrackToggle = () => {
-    const endpoint = autotrack ? '/autotrack/off' : '/autotrack/on';
-    sendCameraCommand(endpoint, `Auto Track ${autotrack ? 'Off' : 'On'}`);
+  const handleAutotrackToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setAutotrack(newValue);
+    const endpoint = newValue ? '/autotrack/on' : '/autotrack/off';
+    sendCameraCommand(endpoint, `Auto Track ${newValue ? 'On' : 'Off'}`);
   };
 
-  const handleMotionToggle = () => {
-    const endpoint = motion ? '/motion/off' : '/motion/on';
-    sendCameraCommand(endpoint, `Motion ${motion ? 'Off' : 'On'}`);
+  const handleMotionToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    // Optimistically update state
+    setMotion(newValue);
+    const endpoint = newValue ? '/motion/on' : '/motion/off';
+    sendCameraCommand(endpoint, `Motion ${newValue ? 'On' : 'Off'}`);
   };
 
   // Stream URL from environment variable (baked at build time)
   const streamUrl = process.env.NEXT_PUBLIC_CAMERA_STREAM_URL;
+
+  // Fetch camera status on mount
+  useEffect(() => {
+    const fetchCameraStatus = async () => {
+      try {
+        setStatusLoading(true);
+        const response = await fetch('/api/camera/status');
+        const result = await response.json();
+
+        console.log('[CAMERA STATUS] Full API response:', result);
+
+        if (!result.success) {
+          console.error('[CAMERA STATUS] API returned error:', result.error);
+          return;
+        }
+
+        // Extract the status object from result.data
+        const status = result.data;
+
+        console.log('[CAMERA STATUS] Status object:', status);
+        console.log('[CAMERA STATUS] Status type:', typeof status);
+        console.log('[CAMERA STATUS] Status keys:', status && typeof status === 'object' ? Object.keys(status) : 'N/A');
+
+        if (!status || typeof status !== 'object' || Array.isArray(status)) {
+          console.warn('[CAMERA STATUS] Invalid status format:', status);
+          return;
+        }
+
+        // Map status fields to state (handle various field name formats)
+        // Case-insensitive matching for flexibility
+        const getBoolValue = (obj: any, ...keys: string[]): boolean => {
+          for (const key of keys) {
+            const lowerKey = key.toLowerCase();
+            for (const [k, v] of Object.entries(obj)) {
+              if (k.toLowerCase() === lowerKey) {
+                console.log(`[CAMERA STATUS] Found field "${k}" with value:`, v, `(type: ${typeof v})`);
+                if (typeof v === 'boolean') return v;
+                if (typeof v === 'number') return v !== 0;
+                if (typeof v === 'string') {
+                  const lower = v.toLowerCase().trim();
+                  return lower === 'true' || lower === 'on' || lower === '1' || lower === 'yes';
+                }
+              }
+            }
+          }
+          console.log(`[CAMERA STATUS] Field not found for keys:`, keys);
+          return false;
+        };
+
+        // Extract all values
+        const privacy = getBoolValue(status, 'privacy', 'privacyMode', 'privacy_mode');
+        const night = getBoolValue(status, 'night', 'nightVision', 'night_vision', 'nightvision');
+        const daynight = getBoolValue(status, 'daynight', 'dayNight', 'day_night', 'daynightmode');
+        const person = getBoolValue(status, 'person', 'personDetection', 'person_detection', 'persondetection');
+        const ledVal = getBoolValue(status, 'led', 'ledControl', 'led_control');
+        const autotrackVal = getBoolValue(status, 'autotrack', 'autoTrack', 'auto_track', 'autotracking');
+        const motionVal = getBoolValue(status, 'motion', 'motionDetection', 'motion_detection', 'motiondetection');
+
+        console.log('[CAMERA STATUS] Extracted values:', {
+          privacy,
+          night,
+          daynight,
+          person,
+          led: ledVal,
+          autotrack: autotrackVal,
+          motion: motionVal
+        });
+
+        // Set all state values
+        setPrivacyMode(privacy);
+        setNightVision(night);
+        setDayNight(daynight);
+        setPersonDetection(person);
+        setLed(ledVal);
+        setAutotrack(autotrackVal);
+        setMotion(motionVal);
+
+        console.log('[CAMERA STATUS] All fields updated successfully');
+      } catch (error: any) {
+        console.error('[CAMERA STATUS] Error fetching camera status:', error);
+        // Don't show error to user - just use defaults
+      } finally {
+        setStatusLoading(false);
+      }
+    };
+
+    fetchCameraStatus();
+  }, []);
 
   useEffect(() => {
     // Initialize status ref
@@ -741,74 +852,54 @@ export default function CameraPage() {
 
             {/* Toggles and Presets */}
             <div className="space-y-4">
-              {/* Privacy Mode Toggle */}
+              {/* Privacy Mode Switch */}
               <div>
                 <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">Privacy Mode</h4>
-                <button
-                  onClick={handlePrivacyToggle}
-                  disabled={!!controlLoading}
-                  className={`w-full py-3 px-4 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group ${
-                    privacyMode
-                      ? 'bg-red-900/20 border-red-600/50 hover:border-red-600 text-red-400'
-                      : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                  }`}
-                >
-                  {controlLoading?.includes('Privacy') ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span className="font-mono text-xs uppercase">Sending...</span>
-                    </>
-                  ) : (
-                    <>
-                      {privacyMode ? (
-                        <>
-                          <EyeOff className="w-5 h-5" />
-                          <span className="font-mono text-xs uppercase">Privacy On</span>
-                        </>
-                      ) : (
-                        <>
-                          <Eye className="w-5 h-5 group-hover:text-gold transition-colors" />
-                          <span className="font-mono text-xs uppercase">Privacy Off</span>
-                        </>
-                      )}
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                  <div className="flex items-center gap-3">
+                    {privacyMode ? (
+                      <EyeOff className="w-5 h-5 text-red-400" />
+                    ) : (
+                      <Eye className="w-5 h-5 text-white" />
+                    )}
+                    <span className="font-mono text-xs uppercase">{privacyMode ? 'Privacy On' : 'Privacy Off'}</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={privacyMode}
+                      onChange={handlePrivacyToggle}
+                      disabled={!!controlLoading || statusLoading}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-red-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                  </label>
+                </div>
               </div>
 
-              {/* Night Vision Toggle */}
+              {/* Night Vision Switch */}
               <div>
                 <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-3">Night Vision</h4>
-                <button
-                  onClick={handleNightVisionToggle}
-                  disabled={!!controlLoading}
-                  className={`w-full py-3 px-4 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group ${
-                    nightVision
-                      ? 'bg-blue-900/20 border-blue-600/50 hover:border-blue-600 text-blue-400'
-                      : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                  }`}
-                >
-                  {controlLoading?.includes('Night Vision') ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span className="font-mono text-xs uppercase">Sending...</span>
-                    </>
-                  ) : (
-                    <>
-                      {nightVision ? (
-                        <>
-                          <Sun className="w-5 h-5" />
-                          <span className="font-mono text-xs uppercase">Night Vision On</span>
-                        </>
-                      ) : (
-                        <>
-                          <Moon className="w-5 h-5 group-hover:text-gold transition-colors" />
-                          <span className="font-mono text-xs uppercase">Night Vision Off</span>
-                        </>
-                      )}
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                  <div className="flex items-center gap-3">
+                    {nightVision ? (
+                      <Sun className="w-5 h-5 text-blue-400" />
+                    ) : (
+                      <Moon className="w-5 h-5 text-white" />
+                    )}
+                    <span className="font-mono text-xs uppercase">{nightVision ? 'Night Vision On' : 'Night Vision Off'}</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={nightVision}
+                      onChange={handleNightVisionToggle}
+                      disabled={!!controlLoading || statusLoading}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
               </div>
 
               {/* Presets */}
@@ -848,109 +939,99 @@ export default function CameraPage() {
             </div>
           </div>
 
-          {/* Additional Camera Settings - Compact Grid */}
+          {/* Additional Camera Settings - Switches */}
           <div className="mt-6 pt-6 border-t border-gray-800">
             <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-4">Camera Settings</h4>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-              {/* Day/Night Mode */}
-              <button
-                onClick={handleDayNightToggle}
-                disabled={!!controlLoading}
-                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
-                  dayNight
-                    ? 'bg-amber-900/20 border-amber-600/50 hover:border-amber-600 text-amber-400'
-                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                }`}
-              >
-                {controlLoading?.includes('Day/Night') ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Sun className={`w-4 h-4 ${!dayNight && 'group-hover:text-gold transition-colors'}`} />
-                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Day/Night</span>
-                  </>
-                )}
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Day/Night Mode Switch */}
+              <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                <div className="flex items-center gap-3">
+                  <Sun className="w-4 h-4 text-amber-400" />
+                  <span className="font-mono text-xs uppercase">Day/Night</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dayNight}
+                    onChange={handleDayNightToggle}
+                    disabled={!!controlLoading || statusLoading}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                </label>
+              </div>
 
-              {/* Person Detection */}
-              <button
-                onClick={handlePersonToggle}
-                disabled={!!controlLoading}
-                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
-                  personDetection
-                    ? 'bg-green-900/20 border-green-600/50 hover:border-green-600 text-green-400'
-                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                }`}
-              >
-                {controlLoading?.includes('Person Detection') ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <User className={`w-4 h-4 ${!personDetection && 'group-hover:text-gold transition-colors'}`} />
-                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Person</span>
-                  </>
-                )}
-              </button>
+              {/* Person Detection Switch */}
+              <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                <div className="flex items-center gap-3">
+                  <User className="w-4 h-4 text-green-400" />
+                  <span className="font-mono text-xs uppercase">Person Detection</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={personDetection}
+                    onChange={handlePersonToggle}
+                    disabled={!!controlLoading || statusLoading}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                </label>
+              </div>
 
-              {/* LED Control */}
-              <button
-                onClick={handleLedToggle}
-                disabled={!!controlLoading}
-                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
-                  led
-                    ? 'bg-yellow-900/20 border-yellow-600/50 hover:border-yellow-600 text-yellow-400'
-                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                }`}
-              >
-                {controlLoading?.includes('LED') ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Lightbulb className={`w-4 h-4 ${!led && 'group-hover:text-gold transition-colors'}`} />
-                    <span className="font-mono text-[10px] uppercase leading-tight text-center">LED</span>
-                  </>
-                )}
-              </button>
+              {/* LED Control Switch */}
+              <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                <div className="flex items-center gap-3">
+                  <Lightbulb className="w-4 h-4 text-yellow-400" />
+                  <span className="font-mono text-xs uppercase">LED</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={led}
+                    onChange={handleLedToggle}
+                    disabled={!!controlLoading || statusLoading}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-yellow-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-600"></div>
+                </label>
+              </div>
 
-              {/* Auto Track */}
-              <button
-                onClick={handleAutotrackToggle}
-                disabled={!!controlLoading}
-                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
-                  autotrack
-                    ? 'bg-purple-900/20 border-purple-600/50 hover:border-purple-600 text-purple-400'
-                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                }`}
-              >
-                {controlLoading?.includes('Auto Track') ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Move className={`w-4 h-4 ${!autotrack && 'group-hover:text-gold transition-colors'}`} />
-                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Auto Track</span>
-                  </>
-                )}
-              </button>
+              {/* Auto Track Switch */}
+              <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                <div className="flex items-center gap-3">
+                  <Move className="w-4 h-4 text-purple-400" />
+                  <span className="font-mono text-xs uppercase">Auto Track</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autotrack}
+                    onChange={handleAutotrackToggle}
+                    disabled={!!controlLoading || statusLoading}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
 
-              {/* Motion Detection */}
-              <button
-                onClick={handleMotionToggle}
-                disabled={!!controlLoading}
-                className={`py-2.5 px-3 border transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-2 group ${
-                  motion
-                    ? 'bg-orange-900/20 border-orange-600/50 hover:border-orange-600 text-orange-400'
-                    : 'bg-charcoal border-gray-700 hover:border-gold text-white'
-                }`}
-              >
-                {controlLoading?.includes('Motion') ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Zap className={`w-4 h-4 ${!motion && 'group-hover:text-gold transition-colors'}`} />
-                    <span className="font-mono text-[10px] uppercase leading-tight text-center">Motion</span>
-                  </>
-                )}
-              </button>
+              {/* Motion Detection Switch */}
+              <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
+                <div className="flex items-center gap-3">
+                  <Zap className="w-4 h-4 text-orange-400" />
+                  <span className="font-mono text-xs uppercase">Motion Detection</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={motion}
+                    onChange={handleMotionToggle}
+                    disabled={!!controlLoading || statusLoading}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-orange-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
+                </label>
+              </div>
             </div>
           </div>
         </div>
