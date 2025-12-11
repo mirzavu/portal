@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     // Construct the full URL to the camera device
     // Supports both IP addresses (100.x.x.x) and MagicDNS hostnames (device.tailnet.ts.net)
-    const deviceUrl = `http://${deviceAddress}:${CAMERA_DEVICE_PORT}/camera-status`;
+    const deviceUrl = `http://${deviceAddress}:${CAMERA_DEVICE_PORT}/status`;
     
     console.log(`[CAMERA STATUS ${requestId}] Fetching status from: ${deviceUrl}`);
     console.log(`[CAMERA STATUS ${requestId}] Port: ${CAMERA_DEVICE_PORT}, Timeout: 10s`);
@@ -106,15 +106,27 @@ export async function GET(request: NextRequest) {
 
       const totalDuration = Date.now() - startTime;
       console.log(`[CAMERA STATUS ${requestId}] Request completed successfully in ${totalDuration}ms`);
+      console.log(`[CAMERA STATUS ${requestId}] Raw response data:`, JSON.stringify(data).substring(0, 500));
       console.log(`[CAMERA STATUS ${requestId}] Data type:`, typeof data);
       if (typeof data === 'object' && !Array.isArray(data) && data !== null) {
         console.log(`[CAMERA STATUS ${requestId}] Data keys:`, Object.keys(data));
       }
 
-      // Return the data directly - it's already the status object from the camera
+      // Handle the response format: {status: {...}, success: true}
+      // Extract the status object if it exists, otherwise return the whole data
+      const statusData = data?.status || data;
+      console.log(`[CAMERA STATUS ${requestId}] Extracted status data keys:`, 
+        typeof statusData === 'object' && statusData !== null ? Object.keys(statusData) : 'N/A');
+
+      // Log the full status for production verification
+      console.log(`[CAMERA STATUS ${requestId}] ===== FULL STATUS DATA =====`);
+      console.log(`[CAMERA STATUS ${requestId}]`, JSON.stringify(statusData, null, 2));
+      console.log(`[CAMERA STATUS ${requestId}] ===== END STATUS DATA =====`);
+
+      // Return the status data
       return NextResponse.json({
         success: true,
-        data: data,
+        data: statusData,
         requestId,
         duration: totalDuration,
       });

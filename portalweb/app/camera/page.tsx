@@ -201,7 +201,7 @@ export default function CameraPage() {
           return;
         }
 
-        // Map status fields to state (handle various field name formats)
+        // Map status fields to state (handle nested structure: {privacy: {enabled: true, raw: {...}}})
         // Case-insensitive matching for flexibility
         const getBoolValue = (obj: any, ...keys: string[]): boolean => {
           for (const key of keys) {
@@ -209,6 +209,13 @@ export default function CameraPage() {
             for (const [k, v] of Object.entries(obj)) {
               if (k.toLowerCase() === lowerKey) {
                 console.log(`[CAMERA STATUS] Found field "${k}" with value:`, v, `(type: ${typeof v})`);
+                
+                // Handle nested structure: {enabled: true, raw: {...}}
+                if (v && typeof v === 'object' && 'enabled' in v) {
+                  return v.enabled === true;
+                }
+                
+                // Handle direct boolean/number/string values
                 if (typeof v === 'boolean') return v;
                 if (typeof v === 'number') return v !== 0;
                 if (typeof v === 'string') {
@@ -222,7 +229,7 @@ export default function CameraPage() {
           return false;
         };
 
-        // Extract all values
+        // Extract all values (status structure: {privacy: {enabled: bool}, led: {enabled: bool}, ...})
         const privacy = getBoolValue(status, 'privacy', 'privacyMode', 'privacy_mode');
         const night = getBoolValue(status, 'night', 'nightVision', 'night_vision', 'nightvision');
         const daynight = getBoolValue(status, 'daynight', 'dayNight', 'day_night', 'daynightmode');
