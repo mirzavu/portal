@@ -461,7 +461,7 @@ export default function CameraPage() {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        debug: true, // Enable debug logging
+        debug: false, // Disable debug logging
       });
 
       hlsRef.current = hls;
