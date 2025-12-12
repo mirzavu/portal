@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const CAMERA_DEVICE_PORT = 5001;
+const CLOUD_PROXY_URL = 'http://139.59.66.225:8100';
 
 export async function GET(request: NextRequest) {
   return handleCameraControl(request);
@@ -12,18 +12,6 @@ export async function POST(request: NextRequest) {
 
 async function handleCameraControl(request: NextRequest) {
   try {
-    const deviceAddress = process.env.NEXT_PUBLIC_CAMERA_DEVICE_IP;
-    
-    if (!deviceAddress) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Camera device IP not configured. Please set NEXT_PUBLIC_CAMERA_DEVICE_IP environment variable (can be IP like 100.x.x.x or MagicDNS hostname).' 
-        },
-        { status: 500 }
-      );
-    }
-
     // Parse the URL to get the endpoint path
     const { searchParams } = new URL(request.url);
     const endpoint = searchParams.get('endpoint');
@@ -38,19 +26,18 @@ async function handleCameraControl(request: NextRequest) {
       );
     }
 
-    // Construct the full URL to the Android device
-    // Supports both IP addresses (100.x.x.x) and MagicDNS hostnames (device.tailnet.ts.net)
-    const deviceUrl = `http://${deviceAddress}:${CAMERA_DEVICE_PORT}${endpoint}`;
+    // Construct the full URL to the cloud proxy
+    const controlUrl = `${CLOUD_PROXY_URL}${endpoint}`;
     
-    console.log(`[CAMERA CONTROL] Sending request to: ${deviceUrl}`);
+    console.log(`[CAMERA CONTROL] Sending request to cloud proxy: ${controlUrl}`);
 
     // Create abort controller for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     try {
-      // Forward the request to the Android device
-      const response = await fetch(deviceUrl, {
+      // Forward the request to the cloud proxy
+      const response = await fetch(controlUrl, {
         method: request.method,
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +113,7 @@ async function handleCameraControl(request: NextRequest) {
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Cannot connect to camera device. Check Tailscale connection and device IP.',
+          error: 'Cannot connect to cloud proxy. Check network connection.',
           command: 'unknown' 
         },
         { status: 503 }

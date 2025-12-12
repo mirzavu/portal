@@ -1,37 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const CAMERA_DEVICE_PORT = 8100;
+const CLOUD_PROXY_URL = 'http://139.59.66.225:8100';
 
 export async function GET(request: NextRequest) {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const startTime = Date.now();
   
   try {
-    const deviceAddress = process.env.NEXT_PUBLIC_CAMERA_DEVICE_IP;
+    // Use cloud proxy endpoint for status
+    const statusUrl = `${CLOUD_PROXY_URL}/status`;
     
-    // Enhanced logging for environment variable check
     console.log(`[CAMERA STATUS ${requestId}] Starting request`);
-    console.log(`[CAMERA STATUS ${requestId}] Environment check - NEXT_PUBLIC_CAMERA_DEVICE_IP:`, 
-      deviceAddress ? `${deviceAddress.substring(0, 8)}...` : 'NOT SET');
-    
-    if (!deviceAddress) {
-      console.error(`[CAMERA STATUS ${requestId}] ERROR: Camera device IP not configured`);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Camera device IP not configured. Please set NEXT_PUBLIC_CAMERA_DEVICE_IP environment variable.',
-          requestId,
-        },
-        { status: 500 }
-      );
-    }
-
-    // Construct the full URL to the camera device
-    // Supports both IP addresses (100.x.x.x) and MagicDNS hostnames (device.tailnet.ts.net)
-    const deviceUrl = `http://${deviceAddress}:${CAMERA_DEVICE_PORT}/status`;
-    
-    console.log(`[CAMERA STATUS ${requestId}] Fetching status from: ${deviceUrl}`);
-    console.log(`[CAMERA STATUS ${requestId}] Port: ${CAMERA_DEVICE_PORT}, Timeout: 10s`);
+    console.log(`[CAMERA STATUS ${requestId}] Fetching status from cloud proxy: ${statusUrl}`);
+    console.log(`[CAMERA STATUS ${requestId}] Timeout: 10s`);
 
     // Create abort controller for timeout
     const controller = new AbortController();
@@ -43,8 +24,8 @@ export async function GET(request: NextRequest) {
     try {
       const fetchStartTime = Date.now();
       
-      // Forward the request to the camera device
-      const response = await fetch(deviceUrl, {
+      // Forward the request to the cloud proxy
+      const response = await fetch(statusUrl, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -189,11 +170,8 @@ export async function GET(request: NextRequest) {
         error.code === 'ENOTFOUND' ||
         error.code === 'ETIMEDOUT') {
       
-      const deviceAddress = process.env.NEXT_PUBLIC_CAMERA_DEVICE_IP;
-      const deviceUrl = deviceAddress ? `http://${deviceAddress}:${CAMERA_DEVICE_PORT}/camera-status` : 'unknown';
-      
       console.error(`[CAMERA STATUS ${requestId}] Network error details:`, {
-        deviceUrl,
+        cloudProxyUrl: `${CLOUD_PROXY_URL}/status`,
         errorCode: error.code,
         errorMessage: error.message,
       });
@@ -201,9 +179,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Cannot connect to camera device. Check Tailscale connection and device IP.',
+          error: 'Cannot connect to cloud proxy. Check network connection.',
           details: error.code || error.message,
-          deviceUrl: deviceAddress ? `${deviceAddress}:${CAMERA_DEVICE_PORT}` : 'not configured',
+          cloudProxyUrl: CLOUD_PROXY_URL,
           requestId,
           duration: totalDuration,
         },
