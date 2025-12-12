@@ -7,9 +7,6 @@ module.exports = {
       env: {
         PORT: 3005,
         NODE_ENV: "production",
-        // Camera device IP or Tailscale hostname (e.g., "100.x.x.x" or "device.tailnet.ts.net")
-        // Replace with your actual camera device IP/hostname
-        NEXT_PUBLIC_CAMERA_DEVICE_IP: "139.59.66.225", // Camera device IP for status endpoint
       },
     },
     {

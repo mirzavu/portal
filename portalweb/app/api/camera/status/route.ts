@@ -1,14 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const CLOUD_PROXY_URL = 'http://139.59.66.225:8100';
-
 export async function GET(request: NextRequest) {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const startTime = Date.now();
   
   try {
+    const cloudProxyUrl = process.env.CAMERA_PROXY_URL;
+    
+    if (!cloudProxyUrl) {
+      console.error(`[CAMERA STATUS ${requestId}] ERROR: Camera proxy URL not configured`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Camera proxy URL not configured. Please set CAMERA_PROXY_URL environment variable.',
+          requestId,
+        },
+        { status: 500 }
+      );
+    }
+    
     // Use cloud proxy endpoint for status
-    const statusUrl = `${CLOUD_PROXY_URL}/status`;
+    const statusUrl = `${cloudProxyUrl}/status`;
     
     console.log(`[CAMERA STATUS ${requestId}] Starting request`);
     console.log(`[CAMERA STATUS ${requestId}] Fetching status from cloud proxy: ${statusUrl}`);
@@ -170,8 +182,10 @@ export async function GET(request: NextRequest) {
         error.code === 'ENOTFOUND' ||
         error.code === 'ETIMEDOUT') {
       
+      const cloudProxyUrl = process.env.CAMERA_PROXY_URL || 'not configured';
+      
       console.error(`[CAMERA STATUS ${requestId}] Network error details:`, {
-        cloudProxyUrl: `${CLOUD_PROXY_URL}/status`,
+        cloudProxyUrl: cloudProxyUrl ? `${cloudProxyUrl}/status` : 'not configured',
         errorCode: error.code,
         errorMessage: error.message,
       });
@@ -181,7 +195,7 @@ export async function GET(request: NextRequest) {
           success: false, 
           error: 'Cannot connect to cloud proxy. Check network connection.',
           details: error.code || error.message,
-          cloudProxyUrl: CLOUD_PROXY_URL,
+          cloudProxyUrl: cloudProxyUrl,
           requestId,
           duration: totalDuration,
         },

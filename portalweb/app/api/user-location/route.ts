@@ -8,16 +8,15 @@ async function controlCameraPrivacy(status: 'home' | 'away' | 'update') {
     return;
   }
 
-  const deviceAddress = process.env.NEXT_PUBLIC_CAMERA_DEVICE_IP;
-  const devicePort = process.env.NEXT_PUBLIC_CAMERA_DEVICE_PORT || '5001';
+  const cloudProxyUrl = process.env.CAMERA_PROXY_URL;
   
-  if (!deviceAddress) {
-    console.error('[CAMERA PRIVACY] Camera device IP not configured. Please set NEXT_PUBLIC_CAMERA_DEVICE_IP environment variable.');
+  if (!cloudProxyUrl) {
+    console.error('[CAMERA PRIVACY] Camera proxy URL not configured. Please set CAMERA_PROXY_URL environment variable.');
     return;
   }
 
   const privacyAction = status === 'home' ? 'on' : 'off';
-  const cameraUrl = `http://${deviceAddress}:${devicePort}/privacy/${privacyAction}`;
+  const cameraUrl = `${cloudProxyUrl}/privacy/${privacyAction}`;
 
   try {
     console.log(`[CAMERA PRIVACY] Setting privacy ${privacyAction} for status: ${status}`);
@@ -26,7 +25,10 @@ async function controlCameraPrivacy(status: 'home' | 'away' | 'update') {
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     const response = await fetch(cameraUrl, {
-      method: 'GET',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
       signal: controller.signal,
     });
 

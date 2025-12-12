@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const CLOUD_PROXY_URL = 'http://139.59.66.225:8100';
-
 export async function GET(request: NextRequest) {
   return handleCameraControl(request);
 }
@@ -12,6 +10,18 @@ export async function POST(request: NextRequest) {
 
 async function handleCameraControl(request: NextRequest) {
   try {
+    const cloudProxyUrl = process.env.CAMERA_PROXY_URL;
+    
+    if (!cloudProxyUrl) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Camera proxy URL not configured. Please set CAMERA_PROXY_URL environment variable.' 
+        },
+        { status: 500 }
+      );
+    }
+    
     // Parse the URL to get the endpoint path
     const { searchParams } = new URL(request.url);
     const endpoint = searchParams.get('endpoint');
@@ -27,7 +37,7 @@ async function handleCameraControl(request: NextRequest) {
     }
 
     // Construct the full URL to the cloud proxy
-    const controlUrl = `${CLOUD_PROXY_URL}${endpoint}`;
+    const controlUrl = `${cloudProxyUrl}${endpoint}`;
     
     console.log(`[CAMERA CONTROL] Sending request to cloud proxy: ${controlUrl}`);
 

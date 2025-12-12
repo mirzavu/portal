@@ -66,7 +66,7 @@ export default function CameraPage() {
       const data = await response.json();
 
       if (data.success) {
-        setControlMessage({ type: 'success', text: `${commandName} command sent successfully` });
+        // Success - no message needed, just show loading which is already displayed inline
         // State is already updated optimistically in the toggle handlers
       } else {
         setControlMessage({ type: 'error', text: data.error || `Failed to send ${commandName} command` });
@@ -232,11 +232,25 @@ export default function CameraPage() {
         // Extract all values (status structure: {privacy: {enabled: bool}, led: {enabled: bool}, ...})
         const privacy = getBoolValue(status, 'privacy', 'privacyMode', 'privacy_mode');
         const night = getBoolValue(status, 'night', 'nightVision', 'night_vision', 'nightvision');
-        const daynight = getBoolValue(status, 'daynight', 'dayNight', 'day_night', 'daynightmode');
         const person = getBoolValue(status, 'person', 'personDetection', 'person_detection', 'persondetection');
         const ledVal = getBoolValue(status, 'led', 'ledControl', 'led_control');
         const autotrackVal = getBoolValue(status, 'autotrack', 'autoTrack', 'auto_track', 'autotracking');
         const motionVal = getBoolValue(status, 'motion', 'motionDetection', 'motion_detection', 'motiondetection');
+        
+        // Special handling for daynight - check raw.image.common.inf_type instead of enabled
+        let daynight = false;
+        const daynightObj = status?.daynight || status?.dayNight || status?.day_night || status?.daynightmode;
+        if (daynightObj) {
+          // Check if it has the nested structure: raw.image.common.inf_type
+          if (daynightObj.raw?.image?.common?.inf_type) {
+            const infType = daynightObj.raw.image.common.inf_type;
+            daynight = infType === 'on' || infType === 'ON' || infType === '1';
+            console.log(`[CAMERA STATUS] Found daynight inf_type: "${infType}" -> ${daynight}`);
+          } else if ('enabled' in daynightObj) {
+            // Fallback to enabled field if inf_type not found
+            daynight = daynightObj.enabled === true;
+          }
+        }
 
         console.log('[CAMERA STATUS] Extracted values:', {
           privacy,
@@ -764,7 +778,16 @@ export default function CameraPage() {
         <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-blood"></div>
         <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-blood"></div>
         
-        <div className="bg-black/80 p-6 backdrop-blur-sm">
+        <div className="bg-black/80 p-6 backdrop-blur-sm relative">
+          {/* Loading overlay for entire control box */}
+          {statusLoading && (
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-gold" />
+                <p className="text-gray-400 font-mono text-xs uppercase">Loading Camera Status...</p>
+              </div>
+            </div>
+          )}
           <div className="mb-4">
             <h3 className="text-blood font-mono uppercase tracking-widest text-xs mb-1">
               Camera Controls
@@ -774,16 +797,20 @@ export default function CameraPage() {
             </p>
           </div>
 
-          {/* Control Message Feedback */}
-          {controlMessage && (
-            <div className={`mb-4 p-3 border rounded ${
-              controlMessage.type === 'success' 
-                ? 'bg-green-900/20 border-green-600/50 text-green-400' 
-                : 'bg-red-900/20 border-red-600/50 text-red-400'
-            }`}>
-              <p className="font-mono text-xs">{controlMessage.text}</p>
-            </div>
-          )}
+          {/* Control Message Feedback - Only show errors, fixed height to prevent layout shift */}
+          <div className="mb-4 h-12 flex items-start">
+            {controlMessage && controlMessage.type === 'error' && (
+              <div className="p-3 border rounded bg-red-900/20 border-red-600/50 text-red-400">
+                <p className="font-mono text-xs">{controlMessage.text}</p>
+              </div>
+            )}
+            {controlLoading && (
+              <div className="p-3 border rounded bg-amber-900/20 border-amber-600/50 text-amber-400 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <p className="font-mono text-xs">Sending command: {controlLoading}...</p>
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* PTZ Controls */}
