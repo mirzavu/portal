@@ -18,7 +18,7 @@ export default function CameraPage() {
   const [controlMessage, setControlMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
   const [nightVision, setNightVision] = useState<boolean>(false);
-  const [dayNight, setDayNight] = useState<boolean>(false);
+  const [dayNight, setDayNight] = useState<'on' | 'off' | 'auto'>('off');
   const [personDetection, setPersonDetection] = useState<boolean>(false);
   const [led, setLed] = useState<boolean>(false);
   const [autotrack, setAutotrack] = useState<boolean>(false);
@@ -73,7 +73,12 @@ export default function CameraPage() {
         // Revert optimistic state update on error
         if (endpoint === '/privacy/on' || endpoint === '/privacy/off') setPrivacyMode(endpoint === '/privacy/on');
         if (endpoint === '/night/on' || endpoint === '/night/off') setNightVision(endpoint === '/night/on');
-        if (endpoint === '/daynight/on' || endpoint === '/daynight/off') setDayNight(endpoint === '/daynight/on');
+        if (endpoint.startsWith('/daynight/')) {
+          const mode = endpoint.split('/').pop() as 'on' | 'off' | 'auto';
+          if (mode === 'on' || mode === 'off' || mode === 'auto') {
+            setDayNight(mode);
+          }
+        }
         if (endpoint === '/person/on' || endpoint === '/person/off') setPersonDetection(endpoint === '/person/on');
         if (endpoint === '/led/on' || endpoint === '/led/off') setLed(endpoint === '/led/on');
         if (endpoint === '/autotrack/on' || endpoint === '/autotrack/off') setAutotrack(endpoint === '/autotrack/on');
@@ -88,7 +93,12 @@ export default function CameraPage() {
       // Revert optimistic state update on error
       if (endpoint === '/privacy/on' || endpoint === '/privacy/off') setPrivacyMode(endpoint === '/privacy/on');
       if (endpoint === '/night/on' || endpoint === '/night/off') setNightVision(endpoint === '/night/on');
-      if (endpoint === '/daynight/on' || endpoint === '/daynight/off') setDayNight(endpoint === '/daynight/on');
+      if (endpoint.startsWith('/daynight/')) {
+        const mode = endpoint.split('/').pop() as 'on' | 'off' | 'auto';
+        if (mode === 'on' || mode === 'off' || mode === 'auto') {
+          setDayNight(mode);
+        }
+      }
       if (endpoint === '/person/on' || endpoint === '/person/off') setPersonDetection(endpoint === '/person/on');
       if (endpoint === '/led/on' || endpoint === '/led/off') setLed(endpoint === '/led/on');
       if (endpoint === '/autotrack/on' || endpoint === '/autotrack/off') setAutotrack(endpoint === '/autotrack/on');
@@ -131,12 +141,12 @@ export default function CameraPage() {
     sendCameraCommand(`/preset/${presetId}`, `Preset ${presetId}`);
   };
 
-  const handleDayNightToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = e.target.checked;
+  const handleDayNightToggle = (mode: 'on' | 'off' | 'auto') => {
     // Optimistically update state
-    setDayNight(newValue);
-    const endpoint = newValue ? '/daynight/on' : '/daynight/off';
-    sendCameraCommand(endpoint, `Day/Night ${newValue ? 'On' : 'Off'}`);
+    setDayNight(mode);
+    const endpoint = `/daynight/${mode}`;
+    const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
+    sendCameraCommand(endpoint, `Day/Night ${modeLabel}`);
   };
 
   const handlePersonToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,17 +248,23 @@ export default function CameraPage() {
         const motionVal = getBoolValue(status, 'motion', 'motionDetection', 'motion_detection', 'motiondetection');
         
         // Special handling for daynight - check raw.image.common.inf_type instead of enabled
-        let daynight = false;
+        let daynight: 'on' | 'off' | 'auto' = 'off';
         const daynightObj = status?.daynight || status?.dayNight || status?.day_night || status?.daynightmode;
         if (daynightObj) {
           // Check if it has the nested structure: raw.image.common.inf_type
           if (daynightObj.raw?.image?.common?.inf_type) {
-            const infType = daynightObj.raw.image.common.inf_type;
-            daynight = infType === 'on' || infType === 'ON' || infType === '1';
-            console.log(`[CAMERA STATUS] Found daynight inf_type: "${infType}" -> ${daynight}`);
+            const infType = String(daynightObj.raw.image.common.inf_type).toLowerCase();
+            if (infType === 'on' || infType === '1') {
+              daynight = 'on';
+            } else if (infType === 'auto' || infType === 'automatic') {
+              daynight = 'auto';
+            } else {
+              daynight = 'off';
+            }
+            console.log(`[CAMERA STATUS] Found daynight inf_type: "${daynightObj.raw.image.common.inf_type}" -> ${daynight}`);
           } else if ('enabled' in daynightObj) {
             // Fallback to enabled field if inf_type not found
-            daynight = daynightObj.enabled === true;
+            daynight = daynightObj.enabled === true ? 'on' : 'off';
           }
         }
 
@@ -977,22 +993,47 @@ export default function CameraPage() {
           <div className="mt-6 pt-6 border-t border-gray-800">
             <h4 className="text-gold font-mono uppercase text-xs tracking-wider mb-4">Camera Settings</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Day/Night Mode Switch */}
+              {/* Day/Night Mode 3-Way Switch */}
               <div className="flex items-center justify-between p-3 bg-charcoal/50 border border-gray-700 rounded">
                 <div className="flex items-center gap-3">
                   <Sun className="w-4 h-4 text-amber-400" />
                   <span className="font-mono text-xs uppercase">Day/Night</span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={dayNight}
-                    onChange={handleDayNightToggle}
+                <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+                  <button
+                    onClick={() => handleDayNightToggle('off')}
                     disabled={!!controlLoading || statusLoading}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
-                </label>
+                    className={`px-3 py-1 text-xs font-mono rounded transition-all ${
+                      dayNight === 'off'
+                        ? 'bg-gray-600 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    OFF
+                  </button>
+                  <button
+                    onClick={() => handleDayNightToggle('auto')}
+                    disabled={!!controlLoading || statusLoading}
+                    className={`px-3 py-1 text-xs font-mono rounded transition-all ${
+                      dayNight === 'auto'
+                        ? 'bg-amber-600 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    AUTO
+                  </button>
+                  <button
+                    onClick={() => handleDayNightToggle('on')}
+                    disabled={!!controlLoading || statusLoading}
+                    className={`px-3 py-1 text-xs font-mono rounded transition-all ${
+                      dayNight === 'on'
+                        ? 'bg-amber-600 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    ON
+                  </button>
+                </div>
               </div>
 
               {/* Person Detection Switch */}
