@@ -11,7 +11,7 @@
 
 # Documentation Files
 
-- Do NOT create any md file.
+- Do NOT create any md file unless requested
 - Local Sudo password is 12121234 . Use it when you want
 
 # Web App Instructions
@@ -79,3 +79,5 @@
             - Run migration and verify state
         - Date fields in PocketBase accept ISO strings (e.g., `new Date().toISOString()`), so use `date` type, not `text`
         - For anonymous access, set `createRule: null` (not empty string `""`)
+
+12121234 is my local ubuntu sudo password

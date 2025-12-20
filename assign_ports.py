@@ -37,8 +37,16 @@ HUMAN_PRESENCE_MONITOR = os.path.join(PROJECT_ROOT, "Multi human presence", "mon
 MAC_TO_PROJECT = {
     "00:4B:12:23:2A:54": "GATEWAY",  # Gateway Hub device
     "84:1F:E8:69:63:30": "BIKE",     # Bike GPS device
-    "48:3F:DA:8B:22:CD": "DOOR",     # Door Knock device
-    "F4:CF:A2:DF:AA:D4": "HUMAN_PRESENCE",  # Multi Human Presence device
+    "88:57:21:78:DA:6C": "DOOR",     # Door Knock device
+    "88:57:21:79:8F:10": "HUMAN_PRESENCE",  # Multi Human Presence device
+}
+
+# Project name to friendly device name mapping
+PROJECT_TO_NAME = {
+    "GATEWAY": "Gateway Hub",
+    "DOOR": "Door knock",
+    "BIKE": "Bike GPS",
+    "HUMAN_PRESENCE": "Multi human presence",
 }
 
 # Regex to extract blocks from `pio device list`
@@ -108,6 +116,8 @@ def decide_roles(ports: List[str]) -> Dict[str, str]:
             print(f"  {port} -> MAC: {mac}")
             project = MAC_TO_PROJECT.get(mac)
             if project:
+                device_name = PROJECT_TO_NAME.get(project, project.lower())
+                print(f"  {device_name.capitalize()} detected")
                 result[project] = port
         else:
             print(f"  {port} -> Could not read MAC address (may not be ESP32/ESP8266)")
@@ -147,8 +157,6 @@ def replace_ini_ports(ini_path: str, new_port: str) -> None:
         with open(ini_path, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"Updated ports in: {ini_path} -> {new_port}")
-    else:
-        print(f"No changes needed: {ini_path}")
 
 
 def replace_monitor_port(monitor_path: str, new_port: str) -> None:
@@ -169,8 +177,6 @@ def replace_monitor_port(monitor_path: str, new_port: str) -> None:
         with open(monitor_path, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"Updated PORT in: {monitor_path} -> {new_port}")
-    else:
-        print(f"No changes needed: {monitor_path}")
 
 
 def main() -> None:

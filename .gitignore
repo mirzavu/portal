@@ -5,6 +5,12 @@
 *.elf
 compile_commands.json
 
+# Test Projects
+test project/
+
+# User Instructions
+user instructions.md
+
 # Serial Output Logs
 *.log
 serial_output_*.log
