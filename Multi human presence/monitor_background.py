@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import serial, time, sys
 
-PORT = "/dev/ttyUSB0"
+PORT = "/dev/ttyUSB1"
 BAUD = 115200
 
 try:

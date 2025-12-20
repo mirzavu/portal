@@ -1,225 +1,105 @@
-#include <ESP8266WiFi.h>
-#include <espnow.h>
-#include <user_interface.h>
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 
-extern "C" {
-  #include "gpio.h"
-}
+// ================= WIRING CONFIG =================
+const gpio_num_t PIN_KNOCK_WAKE = GPIO_NUM_4;
+const int PIN_MOSFET = 25;
+const int PIN_BAT_ADC = 34;
 
-uint8_t gatewayAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-const uint8_t CHANNEL = 11;
+// ================= SETTINGS =================
+uint8_t gatewayAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-const int PIN_KNOCK = 14; // D5
-const int PIN_MOSFET = 4; // D2
+// ROUTER HOPPING FIX: We will send on BOTH channels
+const uint8_t channelList[] = {6, 11}; 
 
-const float VREF = 3.3;
-const float MULT = 2.0;
+#define uS_TO_S_FACTOR 1000000ULL
+#define TIME_TO_SLEEP  3600
 
-volatile bool knockFlag = false;
-volatile uint8_t lastSendStatus = 255;
-
-// ISR for knock detection
-ICACHE_RAM_ATTR void knockISR() {
-  knockFlag = true;
-}
-
-void onSent(uint8_t *mac, uint8_t status) {
-  lastSendStatus = status;
-}
+RTC_DATA_ATTR int bootCount = 0;
 
 struct __attribute__((packed)) FullMessage {
-  uint8_t type; // 1 = knock, 0 = heartbeat
+  uint8_t type;
   int random_id;
   float voltage;
 };
 
-float readBattery() {
-  digitalWrite(PIN_MOSFET, HIGH);
-  delay(50); // Reduced delay to save power, but enough for mosfet
+// ================= HELPERS =================
 
+float readBattery() {
+  pinMode(PIN_MOSFET, OUTPUT);
+  digitalWrite(PIN_MOSFET, HIGH);
+  delay(10); 
   long sum = 0;
-  for (int i = 0; i < 8; i++) {
-    sum += analogRead(A0);
+  for (int i = 0; i < 16; i++) {
+    sum += analogRead(PIN_BAT_ADC);
     delay(2);
   }
-
-  int raw = sum / 8;
-  float v = (raw / 1024.0) * VREF * MULT;
-  digitalWrite(PIN_MOSFET, LOW); // Turn off immediately
-  return v;
+  digitalWrite(PIN_MOSFET, LOW);
+  return (sum / 16.0 / 4095.0) * 3.3 * 2.0;
 }
 
-// Smart delay that breaks on knock
-void smartDelay(unsigned long ms) {
-  unsigned long start = millis();
-  while (millis() - start < ms) {
-    if (knockFlag) {
-      // Interrupt detected, break sleep loop
-      return; 
-    }
-    yield(); // Enter sleep here (if configured)
-  }
-}
+void onSent(const uint8_t *mac_addr, esp_now_send_status_t status) {}
 
-void sendPacket(uint8_t type) {
-  // Ensure we are awake and WiFi is ready
-  wifi_fpm_do_wakeup();
-  wifi_fpm_close();
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  
-  // CRITICAL: Set channel BEFORE initializing ESP-NOW
-  wifi_set_channel(CHANNEL);
-  
-  // POWER OPTIMIZATION: Reduce TX power if gateway is nearby (<20m)
-  WiFi.setOutputPower(20); // Increased back to max for reliability
-  
-  delay(50); // Increased delay for radio stabilization
-
-  if (esp_now_init() != 0) {
-    Serial.println("ESP-NOW Init Failed");
-    return;
-  }
-
-  esp_now_register_send_cb(onSent);
-  esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
-  esp_now_add_peer(gatewayAddress, ESP_NOW_ROLE_SLAVE, CHANNEL, NULL, 0);
-
-  // Add small delay after peer registration
-  delay(10);
-
-  FullMessage m;
-  m.type = type;
-  m.random_id = random(10000, 99999);
-  m.voltage = readBattery();
-
-  Serial.print("Sending Packet Type: ");
-  Serial.print(type);
-  Serial.print(" (");
-  Serial.print(type == 1 ? "KNOCK" : "HEARTBEAT");
-  Serial.print(") | ID: ");
-  Serial.print(m.random_id);
-  Serial.print(" | Voltage: ");
-  Serial.println(m.voltage);
-
-  // CRITICAL FIX: Send multiple times with delays for reliability
-  bool success = false;
-  for (int i = 0; i < 3; i++) { // Back to 3 retries
-    lastSendStatus = 255;
-    esp_now_send(gatewayAddress, (uint8_t*)&m, sizeof(m));
-    
-    // Wait for callback with longer timeout
-    unsigned long start = millis();
-    while (millis() - start < 200 && lastSendStatus == 255) { // Increased to 200ms
-      yield();
-    }
-    
-    if (lastSendStatus == 0) {
-      Serial.println("✓ Delivery Success");
-      success = true;
-      
-      // CRITICAL: Add delay even on success to ensure packet is processed
-      delay(50);
-      break;
-    } else {
-      Serial.print("✗ Delivery Failed, Retry ");
-      Serial.print(i + 1);
-      Serial.println("/3");
-      delay(50); // Increased retry delay
-    }
-  }
-  
-  if (!success) {
-    Serial.println("⚠️  All retries failed!");
-  }
-
-  esp_now_deinit();
-  WiFi.mode(WIFI_OFF); // Turn off radio
-}
+// ================= SETUP =================
 
 void setup() {
   Serial.begin(115200);
-  delay(100);
-  Serial.println("\n\n========================================");
-  Serial.println("    DOOR KNOCK SENSOR STARTING");
-  Serial.println("========================================");
+  bootCount++;
 
-  pinMode(PIN_MOSFET, OUTPUT);
-  digitalWrite(PIN_MOSFET, LOW);
+  // 1. Determine Wakeup Reason
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  uint8_t msgType = (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) ? 1 : 0;
 
-  pinMode(PIN_KNOCK, INPUT_PULLUP);
+  // 2. Init WiFi (Station Mode)
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
-  // Attach Interrupt for Smart Delay Break
-  attachInterrupt(digitalPinToInterrupt(PIN_KNOCK), knockISR, CHANGE);
+  // 3. Init ESP-NOW
+  if (esp_now_init() != ESP_OK) return;
+  esp_now_register_send_cb(onSent);
 
-  // Send initial boot packet
-  Serial.println(">> Sending boot heartbeat...");
-  sendPacket(0);
-  Serial.println("========================================\n");
+  // 4. Register Peer (IMPORTANT: Set channel to 0 so we can switch dynamicallly)
+  esp_now_peer_info_t peerInfo;
+  memset(&peerInfo, 0, sizeof(peerInfo));
+  memcpy(peerInfo.peer_addr, gatewayAddress, 6);
+  peerInfo.channel = 0; // 0 = "Use current radio channel"
+  peerInfo.encrypt = false;
+  esp_now_add_peer(&peerInfo);
+
+  // 5. Prepare Message
+  FullMessage m;
+  m.type = msgType;
+  m.random_id = random(10000, 99999);
+  m.voltage = readBattery();
+
+  // 6. CHANNEL HOPPING SEND LOOP
+  // Send on Channel 6, then switch and send on Channel 11
+  for (int i = 0; i < 2; i++) {
+    int currentCh = channelList[i];
+    
+    // Force Radio to new channel
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(currentCh, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
+    
+    Serial.printf(">> Sending on CH %d... ", currentCh);
+    
+    // Send twice per channel for reliability
+    esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
+    delay(10);
+    esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
+    delay(10);
+    
+    Serial.println("Done.");
+  }
+
+  // 7. SLEEP
+  pinMode(PIN_KNOCK_WAKE, INPUT_PULLUP);
+  esp_sleep_enable_ext0_wakeup(PIN_KNOCK_WAKE, 0);
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_deep_sleep_start();
 }
 
-// CHANGED: 1 hour heartbeat interval (3,600,000 ms)
-const unsigned long HEARTBEAT_INTERVAL_MS = 3600000; // 1 hour
-
-void loop() {
-  // Handle any pending knocks immediately
-  if (knockFlag) {
-      Serial.println("\n🚪 KNOCK DETECTED!");
-      knockFlag = false;
-      sendPacket(1);
-      delay(200); // Debounce
-  }
-
-  static unsigned long lastHeartbeat = 0;
-  
-  // Initialize lastHeartbeat after first send if 0
-  if (lastHeartbeat == 0) lastHeartbeat = millis();
-
-  // Heartbeat Check
-  if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-      Serial.println("\n⏰ Heartbeat Timer Expired");
-      sendPacket(0);
-      lastHeartbeat = millis();
-  }
-
-  Serial.println("💤 Entering Light Sleep...");
-  Serial.flush();
-  
-  int startPinState = digitalRead(PIN_KNOCK);
-
-  // Calculate remaining time to next heartbeat
-  unsigned long passed = millis() - lastHeartbeat;
-  unsigned long sleepTimeMs = (passed < HEARTBEAT_INTERVAL_MS) ? (HEARTBEAT_INTERVAL_MS - passed) : 100;
-  
-  // Prepare for sleep
-  wifi_station_disconnect();
-  wifi_set_opmode(NULL_MODE);
-  wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
-  wifi_fpm_open();
-  
-  // Configure wakeup
-  if (startPinState == LOW) {
-     // Assume Quiet=LOW, Wake on HIGH
-     gpio_pin_wakeup_enable(GPIO_ID_PIN(PIN_KNOCK), GPIO_PIN_INTR_HILEVEL);
-  } else {
-     // Assume Quiet=HIGH, Wake on LOW
-     gpio_pin_wakeup_enable(GPIO_ID_PIN(PIN_KNOCK), GPIO_PIN_INTR_LOLEVEL);
-  }
-  
-  // Sleep using FPM
-  wifi_fpm_do_sleep(sleepTimeMs * 1000); 
-  
-  // Use Smart Delay to allow break-on-interrupt
-  smartDelay(sleepTimeMs + 50);
-  
-  Serial.println("⏰ Woke Up!");
-  
-  // Determine cause
-  if (knockFlag) {
-      Serial.println("   Reason: Door knock interrupt");
-      // Don't clear knockFlag here - let it be handled at start of next loop
-  } else {
-      Serial.println("   Reason: Heartbeat timer");
-  }
-}
+void loop() {}

@@ -98,13 +98,14 @@ void setup() {
   esp_wifi_get_channel(&primaryChan, &secondChan);
   Serial.printf("Radio locked to channel: %d\n", primaryChan);
 
-  if (primaryChan != WIFI_CHANNEL) {
+  // --- DELETED: Channel forcing block - Gateway must float to router's channel ---
+  /* if (primaryChan != WIFI_CHANNEL) {
     Serial.println("WARNING: Channel mismatch! Forcing channel...");
     esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
     delay(100);
     esp_wifi_get_channel(&primaryChan, &secondChan);
     Serial.printf("After force - Channel: %d\n", primaryChan);
-  }
+  } */
 
   // Step 5: Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
