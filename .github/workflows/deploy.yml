@@ -67,8 +67,7 @@ jobs:
         run: |
           cp portalweb/release.tar.gz release.tar.gz
           cp portalweb/ecosystem.config.js ecosystem.config.js
-          # Copy pocketbase if it exists (it might not be in git)
-          [ -f portalweb/pocketbase ] && cp portalweb/pocketbase pocketbase || echo "pocketbase binary not found, will skip in deployment"
+          # Note: PocketBase binary is stored on the server and will be copied during deployment
 
       # --- TRANSFER PHASE ---
       - name: Upload to Server Cache
@@ -77,8 +76,8 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
-          # We upload the app code, the PM2 config, and the PocketBase binary
-          source: "release.tar.gz,ecosystem.config.js,pocketbase"
+          # We upload the app code and PM2 config (PocketBase binary is stored on server)
+          source: "release.tar.gz,ecosystem.config.js"
           target: "/home/${{ secrets.USERNAME }}/deploy-cache/"
 
       # --- DEPLOY PHASE ---
@@ -110,12 +109,95 @@ jobs:
             ln -s $APP_ROOT/pb_data $NEW_RELEASE_DIR/pb_data
             
             # 4. Setup PocketBase
-            if [ -f "$CACHE_DIR/pocketbase" ]; then
-              mv $CACHE_DIR/pocketbase $NEW_RELEASE_DIR/pocketbase
-              chmod +x $NEW_RELEASE_DIR/pocketbase
-              cd $NEW_RELEASE_DIR
-              ./pocketbase migrate up || echo "Migrations warning"
+            # Copy PocketBase binary from persistent location on server
+            POCKETBASE_BINARY="$APP_ROOT/pocketbase"
+            POCKETBASE_DEST="$NEW_RELEASE_DIR/pocketbase"
+            
+            echo "===== POCKETBASE BINARY SETUP ====="
+            echo "[DEBUG] Source path: $POCKETBASE_BINARY"
+            echo "[DEBUG] Destination path: $POCKETBASE_DEST"
+            echo "[DEBUG] Release directory: $NEW_RELEASE_DIR"
+            
+            # Check if source binary exists
+            if [ ! -f "$POCKETBASE_BINARY" ]; then
+              echo "ERROR: PocketBase binary not found at $POCKETBASE_BINARY"
+              echo "[DEBUG] Listing parent directory contents:"
+              ls -la "$APP_ROOT/" | grep -E "pocketbase|releases" || true
+              echo "Please ensure the binary exists at the persistent location."
+              exit 1
             fi
+            
+            # Check source file permissions and size
+            echo "[DEBUG] Source binary info:"
+            ls -lh "$POCKETBASE_BINARY" || true
+            echo "[DEBUG] Source binary permissions: $(stat -c '%a %U:%G' "$POCKETBASE_BINARY" 2>/dev/null || echo 'stat failed')"
+            echo "[DEBUG] Source binary size: $(stat -c '%s' "$POCKETBASE_BINARY" 2>/dev/null || echo 'unknown') bytes"
+            
+            # Check destination directory permissions
+            echo "[DEBUG] Destination directory permissions: $(stat -c '%a %U:%G' "$NEW_RELEASE_DIR" 2>/dev/null || echo 'stat failed')"
+            echo "[DEBUG] Current user: $(whoami)"
+            echo "[DEBUG] Can write to destination? $(test -w "$NEW_RELEASE_DIR" && echo 'YES' || echo 'NO')"
+            
+            # Perform the copy with verbose output
+            echo "[DEBUG] Attempting to copy binary..."
+            if cp -v "$POCKETBASE_BINARY" "$POCKETBASE_DEST" 2>&1; then
+              echo "[DEBUG] Copy command succeeded"
+            else
+              COPY_EXIT_CODE=$?
+              echo "ERROR: Copy command failed with exit code $COPY_EXIT_CODE"
+              echo "[DEBUG] Checking if destination file exists:"
+              ls -la "$POCKETBASE_DEST" 2>&1 || echo "Destination file does not exist"
+              exit 1
+            fi
+            
+            # Verify the copy succeeded
+            if [ ! -f "$POCKETBASE_DEST" ]; then
+              echo "ERROR: Copy appeared to succeed but destination file not found!"
+              echo "[DEBUG] Listing release directory contents:"
+              ls -la "$NEW_RELEASE_DIR/" | head -20 || true
+              exit 1
+            fi
+            
+            # Check destination file size matches source
+            SOURCE_SIZE=$(stat -c '%s' "$POCKETBASE_BINARY" 2>/dev/null || echo "0")
+            DEST_SIZE=$(stat -c '%s' "$POCKETBASE_DEST" 2>/dev/null || echo "0")
+            echo "[DEBUG] Source size: $SOURCE_SIZE bytes"
+            echo "[DEBUG] Destination size: $DEST_SIZE bytes"
+            
+            if [ "$SOURCE_SIZE" != "$DEST_SIZE" ] || [ "$SOURCE_SIZE" = "0" ]; then
+              echo "ERROR: File size mismatch! Source: $SOURCE_SIZE, Dest: $DEST_SIZE"
+              exit 1
+            fi
+            
+            # Set executable permissions
+            echo "[DEBUG] Setting executable permissions..."
+            if chmod +x "$POCKETBASE_DEST"; then
+              echo "[DEBUG] Permissions set successfully"
+              echo "[DEBUG] Final destination file info:"
+              ls -lh "$POCKETBASE_DEST" || true
+            else
+              echo "ERROR: Failed to set executable permissions"
+              exit 1
+            fi
+            
+            # Verify executable bit is set
+            if [ ! -x "$POCKETBASE_DEST" ]; then
+              echo "ERROR: Executable bit not set after chmod!"
+              echo "[DEBUG] File permissions: $(stat -c '%a' "$POCKETBASE_DEST" 2>/dev/null || echo 'unknown')"
+              exit 1
+            fi
+            
+            # Run migrations
+            echo "[DEBUG] Running migrations..."
+            cd $NEW_RELEASE_DIR
+            if ./pocketbase migrate up 2>&1; then
+              echo "✓ PocketBase binary copied and migrations run successfully"
+            else
+              MIGRATE_EXIT_CODE=$?
+              echo "WARNING: Migrations exited with code $MIGRATE_EXIT_CODE"
+              echo "Continuing deployment despite migration warning..."
+            fi
+            echo "===== POCKETBASE SETUP COMPLETE ====="
             
             # 5. Ecosystem & Timestamp File
             cp $CACHE_DIR/ecosystem.config.js $NEW_RELEASE_DIR/
