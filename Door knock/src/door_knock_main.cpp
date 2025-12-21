@@ -11,8 +11,8 @@ const int PIN_BAT_ADC = 34;
 // ================= SETTINGS =================
 uint8_t gatewayAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-// ROUTER HOPPING FIX: We will send on BOTH channels
-const uint8_t channelList[] = {6, 11}; 
+// Locked to channel 6
+const uint8_t WIFI_CHANNEL = 6; 
 
 #define uS_TO_S_FACTOR 1000000ULL
 #define TIME_TO_SLEEP  3600
@@ -74,26 +74,19 @@ void setup() {
   m.random_id = random(10000, 99999);
   m.voltage = readBattery();
 
-  // 6. CHANNEL HOPPING SEND LOOP
-  // Send on Channel 6, then switch and send on Channel 11
-  for (int i = 0; i < 2; i++) {
-    int currentCh = channelList[i];
-    
-    // Force Radio to new channel
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(currentCh, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
-    
-    Serial.printf(">> Sending on CH %d... ", currentCh);
-    
-    // Send twice per channel for reliability
-    esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
-    delay(10);
-    esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
-    delay(10);
-    
-    Serial.println("Done.");
-  }
+  // 6. Set Radio to Channel 6 and Send
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(false);
+  
+  Serial.printf(">> Sending on CH %d... ", WIFI_CHANNEL);
+  
+  // Send twice for reliability
+  esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
+  delay(10);
+  esp_now_send(gatewayAddress, (uint8_t *)&m, sizeof(m));
+  
+  Serial.println("Done.");
 
   // 7. SLEEP
   pinMode(PIN_KNOCK_WAKE, INPUT_PULLUP);

@@ -7,6 +7,9 @@
 #include <HardwareSerial.h>
 #include <driver/rtc_io.h>
 #include "esp_adc_cal.h"
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
  
  // --- Pin Definitions ---
  #define PIN_RADAR_POWER  18    // MOSFET Switch
@@ -17,11 +20,23 @@
  #define PIN_LED          2    // Onboard LED
  
  // --- Configuration ---
- #define SLEEP_SECONDS    10   // Sleep duration
+ #define SLEEP_SECONDS    15   // Sleep duration
  #define RADAR_BAUD       256000 
  #define WARMUP_MS        2000 // Increased to 2.0s for stability
  #define DIVIDER_RATIO    2.0  // 100k/100k
- #define ADC_CAL_FACTOR   0.871  // Calibration factor (adjusted: actual 1.760V / measured 1.952V)
+ #define ADC_CAL_FACTOR   1.000  // Calibration factor (adjusted: actual 1.760V / measured 1.952V)
+
+ // --- ESP-NOW Settings ---
+ uint8_t gatewayAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+ const uint8_t WIFI_CHANNEL = 6; // Locked to channel 6
+
+ // Message struct for ESP-NOW transmission
+ struct __attribute__((packed)) PresenceMessage {
+   uint8_t device_type;  // 2 = human presence sensor
+   float voltage;
+   uint8_t presence;     // 1 = yes, 0 = no
+   int16_t distance;     // Distance in cm, -1 if no presence
+ };
  
  HardwareSerial RadarSerial(2);
  
@@ -35,6 +50,7 @@ esp_adc_cal_characteristics_t adc_chars;
  
  float readBattery();
  bool captureRadarData(unsigned long timeout);
+ void sendToGateway(float voltage, bool presence, int distance);
  
  void setup() {
    // 1. Init System
@@ -117,8 +133,12 @@ esp_adc_cal_characteristics_t adc_chars;
    }
    
    Serial.println("========================================");
- 
-   // 8. VISUAL FEEDBACK (The "Blind Test")
+
+   // 8. Send data to Gateway via ESP-NOW
+   int finalDistance = finalPresence ? distance : -1;
+   sendToGateway(volts, finalPresence, finalDistance);
+
+   // 9. VISUAL FEEDBACK (The "Blind Test")
    if (finalPresence) {
      // BLINK RAPIDLY if person detected
      for(int i=0; i<10; i++) {
@@ -132,7 +152,7 @@ esp_adc_cal_characteristics_t adc_chars;
      digitalWrite(PIN_LED, LOW); 
    }
  
-   // 9. SHUTDOWN SEQUENCE
+   // 10. SHUTDOWN SEQUENCE
    Serial.println("Sleeping...");
    Serial.flush();
  
@@ -222,4 +242,55 @@ float readBattery() {
      delay(10); // Small yield
    }
    return false; // Timeout
+ }
+
+ // --- ESP-NOW Transmission Function ---
+ void sendToGateway(float voltage, bool presence, int distance) {
+   Serial.println("\n--- Sending to Gateway via ESP-NOW ---");
+   
+   // 1. Init WiFi (Station Mode)
+   WiFi.mode(WIFI_STA);
+   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+
+   // 2. Init ESP-NOW
+   if (esp_now_init() != ESP_OK) {
+     Serial.println("ESP-NOW Init Failed!");
+     return;
+   }
+
+   // 3. Register Peer
+   esp_now_peer_info_t peerInfo;
+   memset(&peerInfo, 0, sizeof(peerInfo));
+   memcpy(peerInfo.peer_addr, gatewayAddress, 6);
+   peerInfo.channel = 0; // Use current radio channel
+   peerInfo.encrypt = false;
+   esp_now_add_peer(&peerInfo);
+
+   // 4. Prepare Message
+   PresenceMessage msg;
+   msg.device_type = 2; // Human presence sensor
+   msg.voltage = voltage;
+   msg.presence = presence ? 1 : 0;
+   msg.distance = presence ? distance : -1;
+
+   Serial.printf("Message: Type=%d, Voltage=%.2fV, Presence=%s, Distance=%d cm\n",
+                 msg.device_type, msg.voltage, presence ? "YES" : "NO", msg.distance);
+
+   // 5. Set Radio to Channel 6 and Send
+   esp_wifi_set_promiscuous(true);
+   esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+   esp_wifi_set_promiscuous(false);
+   
+   Serial.printf(">> Sending on CH %d... ", WIFI_CHANNEL);
+   
+   // Send twice for reliability
+   esp_now_send(gatewayAddress, (uint8_t *)&msg, sizeof(msg));
+   delay(10);
+   esp_now_send(gatewayAddress, (uint8_t *)&msg, sizeof(msg));
+   
+   Serial.println("Done.");
+   
+   // Clean up ESP-NOW
+   esp_now_deinit();
+   WiFi.mode(WIFI_OFF);
  }
