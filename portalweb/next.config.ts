@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
     );
     return config;
   },
+  // Add empty turbopack config to silence error when using Turbopack (default in Next.js 16)
+  turbopack: {},
 };
 
 // Debug logging during config load
