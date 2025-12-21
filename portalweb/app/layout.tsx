@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Shield, Map as MapIcon, Database, Lock, Skull, Video } from 'lucide-react';
+import { Shield, Map as MapIcon, Database, Lock, Skull, Video, Paperclip } from 'lucide-react';
 import './globals.css';
 
 export default function RootLayout({
@@ -17,6 +17,7 @@ export default function RootLayout({
     if (pathname === '/bike') return 'bike_gps';
     if (pathname === '/door-knocks') return 'door_knocks';
     if (pathname === '/camera') return 'camera';
+    if (pathname === '/file-transfer') return 'file_transfer';
     return 'dashboard';
   };
 
@@ -51,6 +52,7 @@ export default function RootLayout({
                     { id: 'door_knocks', icon: Lock, label: 'Door Knock', path: '/door-knocks' },
                     { id: 'bike_gps', icon: MapIcon, label: 'Asset Tracker', path: '/bike' },
                     { id: 'camera', icon: Video, label: 'Camera Stream', path: '/camera' },
+                    { id: 'file_transfer', icon: Paperclip, label: 'File Transfer', path: '/file-transfer' },
                   ].map((item) => (
                     <Link
                       key={item.id}
