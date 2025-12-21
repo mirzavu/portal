@@ -33,18 +33,22 @@ export async function GET() {
     });
     
     // Fetch counts for each period
-    console.log('[DOOR-KNOCKS STATS API] Starting parallel requests...');
-    const [todayResult, weekResult, monthResult] = await Promise.all([
-      pb.collection('door_knocks').getList(1, 1, {
-        filter: `timestamp >= "${todayStart.toISOString()}"`,
-      }),
-      pb.collection('door_knocks').getList(1, 1, {
-        filter: `timestamp >= "${weekStart.toISOString()}"`,
-      }),
-      pb.collection('door_knocks').getList(1, 1, {
-        filter: `timestamp >= "${monthStart.toISOString()}"`,
-      }),
-    ]);
+    console.log('[DOOR-KNOCKS STATS API] Starting sequential requests to avoid autocancellation...');
+    // Make requests sequential instead of parallel to avoid PocketBase SDK autocancellation
+    const todayResult = await pb.collection('door_knocks').getList(1, 1, {
+      filter: `timestamp >= "${todayStart.toISOString()}"`,
+    });
+    console.log('[DOOR-KNOCKS STATS API] Today result:', todayResult.totalItems);
+    
+    const weekResult = await pb.collection('door_knocks').getList(1, 1, {
+      filter: `timestamp >= "${weekStart.toISOString()}"`,
+    });
+    console.log('[DOOR-KNOCKS STATS API] Week result:', weekResult.totalItems);
+    
+    const monthResult = await pb.collection('door_knocks').getList(1, 1, {
+      filter: `timestamp >= "${monthStart.toISOString()}"`,
+    });
+    console.log('[DOOR-KNOCKS STATS API] Month result:', monthResult.totalItems);
     
     console.log('[DOOR-KNOCKS STATS API] All requests completed successfully:', {
       today: todayResult.totalItems,
