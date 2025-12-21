@@ -526,7 +526,7 @@ export default function FileTransferPage() {
                                     </div>
                                     {message.file_size && (
                                       <div className="text-[10px] text-gray-500 font-mono">
-                                        {formatFileSize(message.file_size)}
+                                        {formatFileSize(Array.isArray(message.file_size) ? message.file_size[0] : message.file_size)}
                                       </div>
                                     )}
                                   </div>
