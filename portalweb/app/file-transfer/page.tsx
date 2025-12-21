@@ -522,7 +522,7 @@ export default function FileTransferPage() {
                                   <File className="w-4 h-4 text-gray-400" />
                                   <div className="flex-1 min-w-0">
                                     <div className="text-gray-300 text-sm font-mono truncate">
-                                      {message.file_name || 'download'}
+                                      {Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download')}
                                     </div>
                                     {message.file_size && (
                                       <div className="text-[10px] text-gray-500 font-mono">
@@ -531,7 +531,7 @@ export default function FileTransferPage() {
                                     )}
                                   </div>
                                   <button
-                                    onClick={() => handleDownloadFile(message.id, message.file_name || 'download')}
+                                    onClick={() => handleDownloadFile(message.id, Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download'))}
                                     className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
                                     title="Download file"
                                   >
