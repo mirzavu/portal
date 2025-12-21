@@ -50,11 +50,36 @@ export default function Home() {
       try {
         // Fetch recent knocks count (last 24 hours)
         const pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8095';
+        console.log('========================================');
+        console.log('[ENV VAR CHECK] NEXT_PUBLIC_POCKETBASE_URL value:', pbUrl);
+        console.log('[ENV VAR CHECK] Raw process.env.NEXT_PUBLIC_POCKETBASE_URL:', process.env.NEXT_PUBLIC_POCKETBASE_URL);
+        console.log('[ENV VAR CHECK] Type:', typeof pbUrl);
+        console.log('[ENV VAR CHECK] Length:', pbUrl?.length);
+        console.log('[ENV VAR CHECK] Ends with /:', pbUrl?.endsWith('/'));
+        console.log('========================================');
+        
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        const knocksResponse = await fetch(
-          `${pbUrl}/api/collections/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`
-        );
+        const knocksUrl = `${pbUrl}/api/collections/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`;
+        console.log('[DASHBOARD DEBUG] Constructed knocks URL:', knocksUrl);
+        console.log('[DASHBOARD DEBUG] Full URL breakdown:', {
+          base: pbUrl,
+          path: '/api/collections/door_knocks/records',
+          full: knocksUrl
+        });
+        
+        const knocksResponse = await fetch(knocksUrl);
+        console.log('[DASHBOARD DEBUG] Knocks response status:', knocksResponse.status);
+        console.log('[DASHBOARD DEBUG] Knocks response ok:', knocksResponse.ok);
+        console.log('[DASHBOARD DEBUG] Knocks response URL:', knocksResponse.url);
+        
+        if (!knocksResponse.ok) {
+          const errorText = await knocksResponse.text();
+          console.error('[DASHBOARD DEBUG] Knocks response error text:', errorText);
+          throw new Error(`Failed to fetch knocks: ${knocksResponse.status} ${knocksResponse.statusText}`);
+        }
+        
         const knocksData = await knocksResponse.json();
+        console.log('[DASHBOARD DEBUG] Knocks data received:', knocksData);
 
         // Fetch bike status
         const bikeResponse = await fetch('/api/bike/status');
@@ -75,7 +100,12 @@ export default function Home() {
           pm2Status: pm2Data,
         });
       } catch (err) {
-        console.error('Error fetching dashboard data:', err);
+        console.error('[DASHBOARD DEBUG] Error fetching dashboard data:', err);
+        console.error('[DASHBOARD DEBUG] Error details:', {
+          message: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+          name: err instanceof Error ? err.name : undefined
+        });
       } finally {
         setLoading(false);
       }
