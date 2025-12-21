@@ -1,13 +1,28 @@
 name: Deploy Production (Atomic)
 
 # Deployment workflow
+# MANUAL FLAG: Change DEPLOYMENT_MODE below to "source" for source mode, "standalone" for compiled mode
+# Edit this variable before pushing to control deployment mode
+
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      deployment_mode:
+        description: 'Deployment mode'
+        required: true
+        default: 'standalone'
+        type: choice
+        options:
+          - standalone
+          - source
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_MODE: source  # Change to "source" for source mode deployment
     steps:
       # --- BUILD PHASE ---
       - name: Checkout Code
@@ -17,21 +32,61 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: portalweb/package-lock.json
+
+      - name: Determine Deployment Mode
+        id: deployment-mode
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.deployment_mode }}" >> $GITHUB_OUTPUT
+          else
+            # Use DEPLOYMENT_MODE variable from job env (set at top of job)
+            MODE="$DEPLOYMENT_MODE"
+            if [ "$MODE" == "source" ]; then
+              echo "mode=source" >> $GITHUB_OUTPUT
+              echo "Deployment mode: SOURCE (from DEPLOYMENT_MODE variable)"
+            else
+              echo "mode=standalone" >> $GITHUB_OUTPUT
+              echo "Deployment mode: STANDALONE (from DEPLOYMENT_MODE variable)"
+            fi
+          fi
+          echo "Final mode: $(cat $GITHUB_OUTPUT | grep mode | cut -d= -f2)"
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: portalweb/node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('portalweb/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
       - name: Install Dependencies
         working-directory: portalweb
+        if: steps.node-modules-cache.outputs.cache-hit != 'true' || steps.deployment-mode.outputs.mode == 'source'
         run: npm ci
 
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: portalweb/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('portalweb/package-lock.json') }}-${{ hashFiles('portalweb/**/*.ts', 'portalweb/**/*.tsx', 'portalweb/**/*.js', 'portalweb/**/*.jsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('portalweb/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
+
+      - name: Ensure cache directory exists
+        working-directory: portalweb
+        run: mkdir -p .next/cache
+
       - name: Build Next.js (Standalone)
+        if: steps.deployment-mode.outputs.mode == 'standalone'
         working-directory: portalweb
         env:
           NEXT_PUBLIC_CAMERA_STREAM_URL: ${{ secrets.NEXT_PUBLIC_CAMERA_STREAM_URL }}
           NEXT_PUBLIC_POCKETBASE_URL: ${{ secrets.NEXT_PUBLIC_POCKETBASE_URL }}
           NEXT_PUBLIC_PIN_CODE: ${{ secrets.NEXT_PUBLIC_PIN_CODE }}
         run: |
-          echo "[BUILD DEBUG] ===== BUILD START ======"
+          echo "[BUILD DEBUG] ===== BUILD START (STANDALONE MODE) ======"
           echo "[BUILD DEBUG] NEXT_PUBLIC_CAMERA_STREAM_URL length: ${#NEXT_PUBLIC_CAMERA_STREAM_URL}"
           echo "[BUILD DEBUG] NEXT_PUBLIC_POCKETBASE_URL length: ${#NEXT_PUBLIC_POCKETBASE_URL}"
           echo "[BUILD DEBUG] NEXT_PUBLIC_PIN_CODE length: ${#NEXT_PUBLIC_PIN_CODE}"
@@ -57,6 +112,26 @@ jobs:
           cp -r .next/static .next/standalone/.next/static
           cp -r pb_migrations .next/standalone/pb_migrations
 
+      - name: Prepare Source Files
+        if: steps.deployment-mode.outputs.mode == 'source'
+        working-directory: portalweb
+        run: |
+          echo "[DEPLOY DEBUG] ===== PREPARING SOURCE FILES ======"
+          echo "[DEPLOY DEBUG] Mode: SOURCE (for debugging)"
+          # Create a directory structure similar to standalone for consistency
+          mkdir -p .next/standalone
+          # Copy all source files (excluding node_modules, .next build cache, etc.)
+          rsync -av --exclude='node_modules' \
+                    --exclude='.next/cache' \
+                    --exclude='.next/standalone' \
+                    --exclude='.git' \
+                    --exclude='*.log' \
+                    . .next/standalone/
+          # Copy node_modules (needed for source mode)
+          echo "[DEPLOY DEBUG] Copying node_modules..."
+          cp -r node_modules .next/standalone/node_modules
+          echo "[DEPLOY DEBUG] ===== SOURCE FILES PREPARED ======"
+
       - name: Compress Artifact
         working-directory: portalweb
         # Tarballing makes the upload much faster than thousands of small files
@@ -66,7 +141,12 @@ jobs:
         # Copy files to repo root so SCP uploads them without portalweb/ prefix
         run: |
           cp portalweb/release.tar.gz release.tar.gz
-          cp portalweb/ecosystem.config.js ecosystem.config.js
+          # Generate ecosystem.config.js based on deployment mode
+          if [ "${{ steps.deployment-mode.outputs.mode }}" == "source" ]; then
+            printf 'module.exports = {\n  apps: [\n    {\n      name: "portal-web",\n      script: "npm",\n      args: "run dev",\n      env: {\n        PORT: 3005,\n        NODE_ENV: "production",\n      },\n    },\n    {\n      name: "portal-pb",\n      script: "./pocketbase",\n      args: "serve --http=127.0.0.1:8095",\n      cwd: "./",\n      interpreter: "none",\n    },\n  ],\n};\n' > ecosystem.config.js
+          else
+            cp portalweb/ecosystem.config.js ecosystem.config.js
+          fi
           # Note: PocketBase binary is stored on the server and will be copied during deployment
 
       # --- TRANSFER PHASE ---
@@ -93,15 +173,24 @@ jobs:
             CACHE_DIR="/home/${{ secrets.USERNAME }}/deploy-cache"
             TIMESTAMP=$(date +%Y%m%d%H%M%S)
             NEW_RELEASE_DIR="$APP_ROOT/releases/$TIMESTAMP"
+            DEPLOYMENT_MODE="${{ steps.deployment-mode.outputs.mode }}"
             
             # 1. Create directory & 2. Extract
             mkdir -p $NEW_RELEASE_DIR
             tar -xzf $CACHE_DIR/release.tar.gz -C $NEW_RELEASE_DIR
             
-            # 2.1. Verify extraction
-            if [ ! -f "$NEW_RELEASE_DIR/server.js" ]; then
-              echo "ERROR: server.js not found in extracted release"
-              exit 1
+            # 2.1. Verify extraction (different check for source vs standalone)
+            if [ "$DEPLOYMENT_MODE" == "standalone" ]; then
+              if [ ! -f "$NEW_RELEASE_DIR/server.js" ]; then
+                echo "ERROR: server.js not found in extracted release (standalone mode)"
+                exit 1
+              fi
+            else
+              if [ ! -f "$NEW_RELEASE_DIR/package.json" ]; then
+                echo "ERROR: package.json not found in extracted release (source mode)"
+                exit 1
+              fi
+              echo "✓ Source files verified (package.json found)"
             fi
             
             # 3. Link Shared Resources
@@ -117,6 +206,7 @@ jobs:
             echo "[DEBUG] Source path: $POCKETBASE_BINARY"
             echo "[DEBUG] Destination path: $POCKETBASE_DEST"
             echo "[DEBUG] Release directory: $NEW_RELEASE_DIR"
+            echo "[DEBUG] Deployment mode: $DEPLOYMENT_MODE"
             
             # Check if source binary exists
             if [ ! -f "$POCKETBASE_BINARY" ]; then
@@ -203,6 +293,7 @@ jobs:
             cp $CACHE_DIR/ecosystem.config.js $NEW_RELEASE_DIR/
             # Create a file we can read via API to verify version
             echo "$TIMESTAMP" > $NEW_RELEASE_DIR/.deployment-timestamp
+            echo "$DEPLOYMENT_MODE" > $NEW_RELEASE_DIR/.deployment-mode
             
             # 6. Zero-Downtime Switch
             if [ -L "$APP_ROOT/public_html" ]; then
@@ -225,6 +316,7 @@ jobs:
             # 7. Reload PM2 (SAFE MODE)
             cd $APP_ROOT/public_html
             echo "Restarting PM2..."
+            echo "Deployment mode: $DEPLOYMENT_MODE"
             
             # Stop and Delete specifically
             pm2 stop portal-web portal-pb || true
@@ -251,19 +343,25 @@ jobs:
                echo "✓ PM2 verified running from new release."
             fi
             
-            # 7.2 Verify API (Wait for boot)
-            echo "Waiting for Next.js to boot..."
-            RETRIES=0
-            # Wait up to 20 seconds
-            until curl -s http://localhost:3005/api/deployment-status | grep "$TIMESTAMP" || [ $RETRIES -eq 10 ]; do
-               sleep 2
-               ((RETRIES++))
-            done
-            
-            if [ $RETRIES -eq 10 ]; then
-               echo "WARNING: Verification timed out. App might be slow to start or API route missing."
+            # 7.2 Verify API (Wait for boot) - Skip for source mode as it may take longer
+            if [ "$DEPLOYMENT_MODE" == "standalone" ]; then
+              echo "Waiting for Next.js to boot..."
+              RETRIES=0
+              # Wait up to 20 seconds
+              until curl -s http://localhost:3005/api/deployment-status | grep "$TIMESTAMP" || [ $RETRIES -eq 10 ]; do
+                 sleep 2
+                 ((RETRIES++))
+              done
+              
+              if [ $RETRIES -eq 10 ]; then
+                 echo "WARNING: Verification timed out. App might be slow to start or API route missing."
+              else
+                 echo "✓ Code verification passed: API returned timestamp $TIMESTAMP"
+              fi
             else
-               echo "✓ Code verification passed: API returned timestamp $TIMESTAMP"
+              echo "⚠ Source mode: Skipping API verification (app may take longer to start)"
+              echo "⚠ You can now edit source files directly in: $NEW_RELEASE_DIR"
+              echo "⚠ Changes will require PM2 restart: pm2 restart portal-web"
             fi
             
             # 8. Cleanup
@@ -271,4 +369,4 @@ jobs:
             ls -dt * 2>/dev/null | tail -n +6 | xargs -I {} rm -rf {} || true
             rm -rf $CACHE_DIR/*
             
-            echo "Deployment $TIMESTAMP Successful"
+            echo "Deployment $TIMESTAMP Successful (Mode: $DEPLOYMENT_MODE)"
