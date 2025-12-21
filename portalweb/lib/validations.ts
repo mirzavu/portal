@@ -24,6 +24,13 @@ export const userLocationSchema = z.object({
   home_longitude: z.number().min(-180).max(180).optional(),
 });
 
+// Presence data validation
+export const presenceDataSchema = z.object({
+  presence: z.boolean(),
+  distance: z.number().int().min(-1, 'Distance must be -1 or positive'),
+  voltage: z.number().positive('Voltage must be positive'),
+});
+
 // Query parameters for door knocks
 export const doorKnocksQuerySchema = z.object({
   from: z.string().optional().transform((val) => val ? parseInt(val, 10) : undefined),

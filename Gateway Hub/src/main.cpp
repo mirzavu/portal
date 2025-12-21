@@ -51,6 +51,7 @@ const unsigned long PUSH_COOLDOWN_MS = 5000; // 5 second cooldown between ANY pu
 // --- FORWARD DECLARATIONS ---
 void sendPushover(String msg, String title, int priority, String sound);
 void sendDoorKnockAPI(String macAddress);
+void sendPresenceAPI(bool presence, int16_t distance, float voltage);
 String urlEncode(String s);
 
 // ESP-NOW Callback
@@ -291,6 +292,9 @@ void loop() {
         Serial.println("✅ NO PRESENCE (Room Clear)");
       }
       
+      // Send presence data to API
+      sendPresenceAPI(local.presence, local.distance, local.voltage);
+      
       // Battery monitoring for presence sensor (similar to door knock)
       if (local.voltage >= 2.5) { // Only monitor if not on USB
         int pct = (local.voltage <= 3.0) ? 0 : 
@@ -392,6 +396,49 @@ String urlEncode(String s) {
     }
   }
   return encoded;
+}
+
+void sendPresenceAPI(bool presence, int16_t distance, float voltage) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Error: No WiFi connection, cannot send Presence API.");
+    return;
+  }
+
+  // Use regular WiFi client for HTTP
+  WiFiClient client;
+  HTTPClient http;
+
+  Serial.print("Calling Presence API... ");
+  
+  // TESTING: Replace with your laptop's IP address
+  if (!http.begin(client, "http://192.168.29.15:8080/api/presence")) { // Change IP to your laptop!
+    Serial.println("FAILED to begin HTTP");
+    return;
+  }
+  
+  http.addHeader("Content-Type", "application/json");
+
+  // Build JSON body
+  String jsonBody = "{";
+  jsonBody += "\"presence\":" + String(presence ? "true" : "false") + ",";
+  jsonBody += "\"distance\":" + String(distance) + ",";
+  jsonBody += "\"voltage\":" + String(voltage, 2);
+  jsonBody += "}";
+
+  Serial.println();
+  Serial.println("Request Body: " + jsonBody);
+
+  int httpCode = http.POST(jsonBody);
+  
+  if (httpCode > 0) {
+    Serial.printf("Presence API Response Code: %d\n", httpCode);
+    String response = http.getString();
+    Serial.println("Response: " + response);
+  } else {
+    Serial.printf("Presence API FAILED (Error: %d)\n", httpCode);
+  }
+  
+  http.end();
 }
 
 void sendPushover(String message, String title, int priority, String sound) {

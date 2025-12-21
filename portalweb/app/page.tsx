@@ -215,11 +215,13 @@ export default function Home() {
                   </div>
                 )}
                 <div className="text-sm text-gray-400 mb-2 font-mono">
-                  Battery: {stats.presenceData.battery_percent}% ({stats.presenceData.voltage.toFixed(2)}V)
+                  Battery: {stats.presenceData.battery_percent}% ({stats.presenceData.voltage?.toFixed(2) || 'N/A'}V)
                 </div>
-                <div className="text-xs text-gray-500 mb-4 font-mono">
-                  Updated {formatRelativeTime(stats.presenceData.timestamp)}
-                </div>
+                {stats.presenceData.timestamp && (
+                  <div className="text-xs text-gray-500 mb-4 font-mono">
+                    Updated {formatRelativeTime(stats.presenceData.timestamp)}
+                  </div>
+                )}
               </>
             ) : (
               <>
