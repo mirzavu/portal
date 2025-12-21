@@ -22,7 +22,7 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
-      DEPLOYMENT_MODE: standalone  # Change to "source" for source mode deployment
+      DEPLOYMENT_MODE: source  # Change to "source" for source mode deployment
     steps:
       # --- BUILD PHASE ---
       - name: Checkout Code
