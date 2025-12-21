@@ -115,27 +115,41 @@ jobs:
       - name: Prepare Source Files
         if: steps.deployment-mode.outputs.mode == 'source'
         working-directory: portalweb
+        env:
+          NEXT_PUBLIC_CAMERA_STREAM_URL: ${{ secrets.NEXT_PUBLIC_CAMERA_STREAM_URL }}
+          NEXT_PUBLIC_POCKETBASE_URL: ${{ secrets.NEXT_PUBLIC_POCKETBASE_URL }}
+          NEXT_PUBLIC_PIN_CODE: ${{ secrets.NEXT_PUBLIC_PIN_CODE }}
         run: |
           echo "[DEPLOY DEBUG] ===== PREPARING SOURCE FILES ======"
-          echo "[DEPLOY DEBUG] Mode: SOURCE (for debugging)"
-          # Create a directory structure similar to standalone for consistency
-          mkdir -p .next/standalone
-          # Copy all source files (excluding node_modules, .next build cache, etc.)
-          rsync -av --exclude='node_modules' \
-                    --exclude='.next/cache' \
-                    --exclude='.next/standalone' \
-                    --exclude='.git' \
-                    --exclude='*.log' \
-                    . .next/standalone/
-          # Copy node_modules (needed for source mode)
-          echo "[DEPLOY DEBUG] Copying node_modules..."
-          cp -r node_modules .next/standalone/node_modules
+          echo "[DEPLOY DEBUG] Mode: SOURCE (build + source files for editing)"
+          # Build the app first to ensure it works reliably
+          echo "[DEPLOY DEBUG] Building Next.js app..."
+          npm run build 2>&1 | tee build.log || {
+            echo "ERROR: Build failed in source mode"
+            cat build.log
+            exit 1
+          }
+          # Clean up build cache to reduce size (we'll rebuild if needed)
+          echo "[DEPLOY DEBUG] Cleaning build cache..."
+          rm -rf .next/cache
           echo "[DEPLOY DEBUG] ===== SOURCE FILES PREPARED ======"
 
       - name: Compress Artifact
         working-directory: portalweb
         # Tarballing makes the upload much faster than thousands of small files
-        run: tar -czf release.tar.gz -C .next/standalone .
+        run: |
+          if [ "${{ steps.deployment-mode.outputs.mode }}" == "source" ]; then
+            # For source mode, tar from current directory (natural structure)
+            tar -czf release.tar.gz \
+              --exclude='.git' \
+              --exclude='.next/cache' \
+              --exclude='*.log' \
+              --exclude='node_modules/.cache' \
+              .
+          else
+            # For standalone mode, tar from .next/standalone
+            tar -czf release.tar.gz -C .next/standalone .
+          fi
 
       - name: Prepare Files for Upload
         # Copy files to repo root so SCP uploads them without portalweb/ prefix
@@ -143,7 +157,9 @@ jobs:
           cp portalweb/release.tar.gz release.tar.gz
           # Generate ecosystem.config.js based on deployment mode
           if [ "${{ steps.deployment-mode.outputs.mode }}" == "source" ]; then
-            printf 'module.exports = {\n  apps: [\n    {\n      name: "portal-web",\n      script: "npm",\n      args: "run dev",\n      env: {\n        PORT: 3005,\n        NODE_ENV: "production",\n      },\n    },\n    {\n      name: "portal-pb",\n      script: "./pocketbase",\n      args: "serve --http=127.0.0.1:8095",\n      cwd: "./",\n      interpreter: "none",\n    },\n  ],\n};\n' > ecosystem.config.js
+            # For source mode, we need to build first, then use next start with source files available
+            # This ensures the app works reliably while still allowing source editing
+            printf 'module.exports = {\n  apps: [\n    {\n      name: "portal-web",\n      script: "npm",\n      args: "run start",\n      env: {\n        PORT: 3005,\n        NODE_ENV: "production",\n      },\n    },\n    {\n      name: "portal-pb",\n      script: "./pocketbase",\n      args: "serve --http=127.0.0.1:8095",\n      cwd: "./",\n      interpreter: "none",\n    },\n  ],\n};\n' > ecosystem.config.js
           else
             cp portalweb/ecosystem.config.js ecosystem.config.js
           fi
@@ -185,12 +201,17 @@ jobs:
                 echo "ERROR: server.js not found in extracted release (standalone mode)"
                 exit 1
               fi
+              echo "✓ Standalone build verified (server.js found)"
             else
               if [ ! -f "$NEW_RELEASE_DIR/package.json" ]; then
                 echo "ERROR: package.json not found in extracted release (source mode)"
                 exit 1
               fi
-              echo "✓ Source files verified (package.json found)"
+              if [ ! -d "$NEW_RELEASE_DIR/.next" ]; then
+                echo "ERROR: .next directory not found in extracted release (source mode - build required)"
+                exit 1
+              fi
+              echo "✓ Source files verified (package.json and .next directory found)"
             fi
             
             # 3. Link Shared Resources
@@ -366,7 +387,10 @@ jobs:
             
             # 8. Cleanup
             cd $APP_ROOT/releases
-            ls -dt * 2>/dev/null | tail -n +6 | xargs -I {} rm -rf {} || true
+            # Keep only the last 5 releases (tail -n +6 means skip first 5, delete the rest)
+            if [ "$(ls -1 | wc -l)" -gt 5 ]; then
+              ls -dt * 2>/dev/null | tail -n +6 | xargs -I {} rm -rf {} || true
+            fi
             rm -rf $CACHE_DIR/*
             
             echo "Deployment $TIMESTAMP Successful (Mode: $DEPLOYMENT_MODE)"
