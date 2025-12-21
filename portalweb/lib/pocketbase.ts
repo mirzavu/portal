@@ -6,7 +6,11 @@ let pb: PocketBase | null = null;
 export function getPocketBase(): PocketBase {
   if (!pb) {
     const url = process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8095';
+    console.log('[POCKETBASE CLIENT] Initializing with URL:', url);
+    console.log('[POCKETBASE CLIENT] POCKETBASE_URL:', process.env.POCKETBASE_URL);
+    console.log('[POCKETBASE CLIENT] NEXT_PUBLIC_POCKETBASE_URL:', process.env.NEXT_PUBLIC_POCKETBASE_URL);
     pb = new PocketBase(url);
+    console.log('[POCKETBASE CLIENT] Client created, baseUrl:', pb.baseUrl);
   }
   return pb;
 }

@@ -4,6 +4,7 @@ import { doorKnocksQuerySchema } from '@/lib/validations';
 
 export async function GET(request: NextRequest) {
   try {
+    console.log('[DOOR-KNOCKS API] Request received');
     const { searchParams } = new URL(request.url);
     const query = doorKnocksQuerySchema.parse({
       from: searchParams.get('from') || undefined,
@@ -12,7 +13,12 @@ export async function GET(request: NextRequest) {
       perPage: searchParams.get('perPage') || '50',
     });
     
+    console.log('[DOOR-KNOCKS API] Query parsed:', query);
+    console.log('[DOOR-KNOCKS API] POCKETBASE_URL:', process.env.POCKETBASE_URL);
+    console.log('[DOOR-KNOCKS API] NEXT_PUBLIC_POCKETBASE_URL:', process.env.NEXT_PUBLIC_POCKETBASE_URL);
+    
     const pb = getPocketBase();
+    console.log('[DOOR-KNOCKS API] PocketBase client created, baseUrl:', pb.baseUrl);
     
     // Build filter
     let filter = '';
@@ -29,6 +35,9 @@ export async function GET(request: NextRequest) {
       filter = filters.join(' && ');
     }
     
+    console.log('[DOOR-KNOCKS API] Filter:', filter);
+    console.log('[DOOR-KNOCKS API] Fetching from PocketBase...');
+    
     const result = await pb.collection('door_knocks').getList(
       query.page || 1,
       query.perPage || 50,
@@ -38,6 +47,8 @@ export async function GET(request: NextRequest) {
       }
     );
     
+    console.log('[DOOR-KNOCKS API] Successfully fetched', result.items.length, 'items');
+    
     return NextResponse.json({
       items: result.items,
       page: result.page,
@@ -46,7 +57,13 @@ export async function GET(request: NextRequest) {
       totalPages: result.totalPages,
     });
   } catch (error: any) {
-    console.error('Error fetching door knocks:', error);
+    console.error('[DOOR-KNOCKS API] Error fetching door knocks:', error);
+    console.error('[DOOR-KNOCKS API] Error name:', error?.name);
+    console.error('[DOOR-KNOCKS API] Error message:', error?.message);
+    console.error('[DOOR-KNOCKS API] Error status:', error?.status);
+    console.error('[DOOR-KNOCKS API] Error isAbort:', error?.isAbort);
+    console.error('[DOOR-KNOCKS API] Error response:', error?.response);
+    console.error('[DOOR-KNOCKS API] Error originalError:', error?.originalError);
     
     if (error.name === 'ZodError') {
       return NextResponse.json(
@@ -56,7 +73,11 @@ export async function GET(request: NextRequest) {
     }
     
     return NextResponse.json(
-      { error: 'Failed to fetch door knocks' },
+      { 
+        error: 'Failed to fetch door knocks',
+        details: error?.message || 'Unknown error',
+        status: error?.status || 500
+      },
       { status: 500 }
     );
   }
