@@ -141,14 +141,22 @@ jobs:
         # Tarballing makes the upload much faster than thousands of small files
         run: |
           if [ "${{ steps.deployment-mode.outputs.mode }}" == "source" ]; then
-            # For source mode, tar from current directory (natural structure)
-            tar -czf release.tar.gz \
+            echo "[DEPLOY DEBUG] Creating stable snapshot for packaging..."
+            SNAPSHOT_DIR=$(mktemp -d)
+            # Copy a stable snapshot of current directory into $SNAPSHOT_DIR
+            rsync -a --delete \
               --exclude='.git' \
               --exclude='.next/cache' \
               --exclude='*.log' \
               --exclude='node_modules/.cache' \
               --exclude='release.tar.gz' \
-              .
+              ./ "$SNAPSHOT_DIR"/
+
+            # Create tar from snapshot (this cannot be modified while tar runs)
+            tar -czf release.tar.gz -C "$SNAPSHOT_DIR" .
+
+            # Clean up snapshot dir
+            rm -rf "$SNAPSHOT_DIR"
           else
             # For standalone mode, tar from .next/standalone
             tar -czf release.tar.gz -C .next/standalone .
