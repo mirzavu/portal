@@ -147,6 +147,7 @@ jobs:
               --exclude='.next/cache' \
               --exclude='*.log' \
               --exclude='node_modules/.cache' \
+              --exclude='release.tar.gz' \
               .
           else
             # For standalone mode, tar from .next/standalone
