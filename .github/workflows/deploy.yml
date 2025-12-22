@@ -124,6 +124,8 @@ jobs:
           echo "[DEPLOY DEBUG] Mode: SOURCE (build + source files for editing)"
           # Build the app first to ensure it works reliably
           echo "[DEPLOY DEBUG] Building Next.js app..."
+          # Temporarily disable standalone output for source mode build (we want standard .next output)
+          sed -i 's/output: "standalone"/\/\/ output: "standalone"/' next.config.ts
           npm run build 2>&1 | tee build.log || {
             echo "ERROR: Build failed in source mode"
             cat build.log
@@ -159,7 +161,7 @@ jobs:
           if [ "${{ steps.deployment-mode.outputs.mode }}" == "source" ]; then
             # For source mode, we need to build first, then use next start with source files available
             # This ensures the app works reliably while still allowing source editing
-            printf 'module.exports = {\n  apps: [\n    {\n      name: "portal-web",\n      script: "npm",\n      args: "run start",\n      env: {\n        PORT: 3005,\n        NODE_ENV: "production",\n      },\n    },\n    {\n      name: "portal-pb",\n      script: "./pocketbase",\n      args: "serve --http=127.0.0.1:8095",\n      cwd: "./",\n      interpreter: "none",\n    },\n  ],\n};\n' > ecosystem.config.js
+            printf 'module.exports = {\n  apps: [\n    {\n      name: "portal-web",\n      script: "npm",\n      args: "run start",\n      cwd: "./",\n      env: {\n        PORT: 3005,\n        NODE_ENV: "production",\n      },\n    },\n    {\n      name: "portal-pb",\n      script: "./pocketbase",\n      args: "serve --http=127.0.0.1:8095",\n      cwd: "./",\n      interpreter: "none",\n    },\n  ],\n};\n' > ecosystem.config.js
           else
             cp portalweb/ecosystem.config.js ecosystem.config.js
           fi
