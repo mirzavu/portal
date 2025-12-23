@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Paperclip, Send, Trash2, Plus, Download, File, MessageSquare, X } from 'lucide-react';
+import { Paperclip, Send, Trash2, Plus, Download, File, MessageSquare, X, Link, Check } from 'lucide-react';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 interface Thread {
@@ -43,6 +43,7 @@ export default function FileTransferPage() {
   const [messageText, setMessageText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -54,10 +55,10 @@ export default function FileTransferPage() {
       const data = await response.json();
       setThreads(data.items || []);
       setError(null);
-      
+
       // Use savedThreadId parameter or current selectedThreadId state
       const threadIdToCheck = savedThreadId !== undefined ? savedThreadId : selectedThreadId;
-      
+
       if (threadIdToCheck && data.items) {
         // Validate that the saved/selected thread still exists
         const threadExists = data.items.some((t: Thread) => t.id === threadIdToCheck);
@@ -80,7 +81,7 @@ export default function FileTransferPage() {
 
   const fetchMessages = async (threadId: string) => {
     if (!threadId) return;
-    
+
     try {
       setLoadingMessages(true);
       setError(null); // Clear previous errors
@@ -142,7 +143,7 @@ export default function FileTransferPage() {
 
   const handleCreateThread = async () => {
     if (!newThreadName.trim()) return;
-    
+
     try {
       setCreatingThread(true);
       const response = await fetch('/api/file-transfer/threads', {
@@ -150,10 +151,10 @@ export default function FileTransferPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newThreadName.trim() }),
       });
-      
+
       if (!response.ok) throw new Error('Failed to create thread');
       const thread = await response.json();
-      
+
       setShowCreateThread(false);
       setNewThreadName('');
       await fetchThreads();
@@ -189,13 +190,13 @@ export default function FileTransferPage() {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || errorData.details || 'Failed to send message');
       }
-      
+
       setMessageText('');
       setSelectedFiles([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-      
+
       await fetchMessages(selectedThreadId);
       await fetchThreads(); // Refresh threads to update updated timestamp
     } catch (err: any) {
@@ -214,7 +215,7 @@ export default function FileTransferPage() {
       });
 
       if (!response.ok) throw new Error('Failed to delete message');
-      
+
       if (selectedThreadId) {
         await fetchMessages(selectedThreadId);
         await fetchThreads();
@@ -233,7 +234,7 @@ export default function FileTransferPage() {
       if (!response.ok) throw new Error('Failed to fetch messages');
       const data = await response.json();
       const messageIds = (data.items || []).map((msg: Message) => msg.id);
-      
+
       // Delete all messages (reusing existing delete message logic)
       for (const messageId of messageIds) {
         const deleteResponse = await fetch(`/api/file-transfer/messages/${messageId}`, {
@@ -243,7 +244,7 @@ export default function FileTransferPage() {
           console.warn(`Failed to delete message ${messageId}`);
         }
       }
-      
+
       // Refresh messages and threads
       if (selectedThreadId === threadId) {
         await fetchMessages(threadId);
@@ -263,7 +264,7 @@ export default function FileTransferPage() {
       });
 
       if (!response.ok) throw new Error('Failed to delete thread');
-      
+
       // Clear selected thread if it was the deleted one
       if (selectedThreadId === threadId) {
         setSelectedThreadId(null);
@@ -271,7 +272,7 @@ export default function FileTransferPage() {
           localStorage.removeItem('fileTransfer_selectedThreadId');
         }
       }
-      
+
       // Refresh threads list
       await fetchThreads();
     } catch (err: any) {
@@ -279,14 +280,12 @@ export default function FileTransferPage() {
     }
   };
 
-  const handleDownloadFile = async (messageId: string, fileName: string, fileIndex?: number) => {
+  const handleDownloadFile = async (messageId: string, fileName: string) => {
     try {
-      const url = fileIndex !== undefined 
-        ? `/api/file-transfer/files/${messageId}?index=${fileIndex}`
-        : `/api/file-transfer/files/${messageId}`;
+      const url = `/api/file-transfer/files/${messageId}/${encodeURIComponent(fileName)}?download=true`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to download file');
-      
+
       // Extract filename from Content-Disposition header
       let downloadFileName = fileName;
       const contentDisposition = response.headers.get('Content-Disposition');
@@ -314,7 +313,7 @@ export default function FileTransferPage() {
           }
         }
       }
-      
+
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -326,6 +325,24 @@ export default function FileTransferPage() {
       document.body.removeChild(a);
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const handleCopyLink = async (messageId: string, fileName: string, uniqueKey: string) => {
+    try {
+      const relativeUrl = `/api/file-transfer/files/${messageId}/${encodeURIComponent(fileName)}`;
+
+      const fullUrl = `${window.location.origin}${relativeUrl}`;
+      await navigator.clipboard.writeText(fullUrl);
+
+      setCopiedStates(prev => ({ ...prev, [uniqueKey]: true }));
+
+      setTimeout(() => {
+        setCopiedStates(prev => ({ ...prev, [uniqueKey]: false }));
+      }, 2000);
+    } catch (err: any) {
+      console.error('Failed to copy link:', err);
+      setError('Failed to copy link to clipboard');
     }
   };
 
@@ -382,7 +399,7 @@ export default function FileTransferPage() {
               <Plus className="w-4 h-4" />
             </button>
           </div>
-          
+
           {loading ? (
             <div className="text-center py-8 text-gray-400">Loading...</div>
           ) : threads.length === 0 ? (
@@ -394,23 +411,21 @@ export default function FileTransferPage() {
               {threads.map((thread) => (
                 <div
                   key={thread.id}
-                  className={`group relative w-full border transition-all ${
-                    selectedThreadId === thread.id
-                      ? 'bg-blood/10 border-blood'
-                      : 'border-gray-700 hover:border-gray-600 hover:bg-gray-900/50'
-                  }`}
+                  className={`group relative w-full border transition-all ${selectedThreadId === thread.id
+                    ? 'bg-blood/10 border-blood'
+                    : 'border-gray-700 hover:border-gray-600 hover:bg-gray-900/50'
+                    }`}
                 >
                   <button
                     onClick={() => setSelectedThreadId(thread.id)}
                     className="w-full text-left p-3 pr-8"
                   >
-                    <div className={`font-mono text-sm truncate ${
-                      selectedThreadId === thread.id ? 'text-blood' : 'text-gray-300'
-                    }`}>
+                    <div className={`font-mono text-sm truncate ${selectedThreadId === thread.id ? 'text-blood' : 'text-gray-300'
+                      }`}>
                       {thread.name}
                     </div>
                     {(thread.updated || thread.created) && (
-                      <div className="text-[10px] text-gray-500 font-mono mt-1">
+                      <div className="text-[10px] text-gray-500 font-mono mt-1" suppressHydrationWarning>
                         {formatRelativeTime(thread.updated || thread.created)}
                       </div>
                     )}
@@ -444,7 +459,7 @@ export default function FileTransferPage() {
                 <div>
                   <h3 className="text-white font-mono text-lg">{selectedThread?.name}</h3>
                   {selectedThread?.created && (
-                    <div className="text-[10px] text-gray-500 font-mono mt-1">
+                    <div className="text-[10px] text-gray-500 font-mono mt-1" suppressHydrationWarning>
                       Created {formatDate(selectedThread.created)}
                     </div>
                   )}
@@ -481,18 +496,19 @@ export default function FileTransferPage() {
                               {message.message}
                             </div>
                           )}
-                          
+
                           {message.file && (
                             <div className="space-y-2">
                               {Array.isArray(message.file) ? (
                                 // Multiple files
                                 message.file.map((fileRef: string, index: number) => {
-                                  const fileName = Array.isArray(message.file_name) 
-                                    ? message.file_name[index] 
+                                  const fileName = Array.isArray(message.file_name)
+                                    ? message.file_name[index]
                                     : message.file_name || 'download';
                                   const fileSize = Array.isArray(message.file_size)
                                     ? message.file_size[index]
                                     : message.file_size;
+                                  const isCopied = copiedStates[`${message.id}-${index}`];
                                   return (
                                     <div key={index} className="flex items-center gap-2 p-2 bg-gray-800/50 border border-gray-700">
                                       <File className="w-4 h-4 text-gray-400" />
@@ -507,7 +523,14 @@ export default function FileTransferPage() {
                                         )}
                                       </div>
                                       <button
-                                        onClick={() => handleDownloadFile(message.id, fileName, index)}
+                                        onClick={() => handleCopyLink(message.id, fileName, `${message.id}-${index}`)}
+                                        className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                        title="Copy direct link"
+                                      >
+                                        {isCopied ? <Check className="w-4 h-4 text-green-500" /> : <Link className="w-4 h-4" />}
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadFile(message.id, fileName)}
                                         className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
                                         title="Download file"
                                       >
@@ -531,6 +554,13 @@ export default function FileTransferPage() {
                                     )}
                                   </div>
                                   <button
+                                    onClick={() => handleCopyLink(message.id, Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download'), `${message.id}-single`)}
+                                    className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                    title="Copy direct link"
+                                  >
+                                    {copiedStates[`${message.id}-single`] ? <Check className="w-4 h-4 text-green-500" /> : <Link className="w-4 h-4" />}
+                                  </button>
+                                  <button
                                     onClick={() => handleDownloadFile(message.id, Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download'))}
                                     className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
                                     title="Download file"
@@ -541,14 +571,14 @@ export default function FileTransferPage() {
                               )}
                             </div>
                           )}
-                          
+
                           {message.timestamp && (
-                            <div className="text-[10px] text-gray-500 font-mono mt-2">
+                            <div className="text-[10px] text-gray-500 font-mono mt-2" suppressHydrationWarning>
                               {formatRelativeTime(message.timestamp)}
                             </div>
                           )}
                         </div>
-                        
+
                         <button
                           onClick={() => handleDeleteMessage(message.id)}
                           className="opacity-0 group-hover:opacity-100 p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
@@ -586,7 +616,7 @@ export default function FileTransferPage() {
                     ))}
                   </div>
                 )}
-                
+
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -608,7 +638,9 @@ export default function FileTransferPage() {
                     multiple
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
-                      setSelectedFiles(files);
+                      setSelectedFiles(prev => [...prev, ...files]);
+                      // Reset the input so the same file can be selected again if needed
+                      e.target.value = '';
                     }}
                     className="hidden"
                   />
