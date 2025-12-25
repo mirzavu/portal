@@ -107,16 +107,7 @@ export async function POST(
                 .toFile(outputTempPath);
 
         } else if (action === 'compress_image_original') {
-            newFileName = fileName; // Keep name (or maybe prefix? User said "rename to compressed file"?)
-            // User said "delete the original file and rename to compressed file".
-            // If we keep the format, we can keep the name, or modify it. 
-            // If we keep the name, PB might version it (name_xyz.png). 
-            // To ensure it's treated as a replacement, let's append "_compressed" if extension is same, or just rely on PB handling.
-            // Actually user said: "rename to compressed file". Let's maybe append "_compressed"? 
-            // Or if format changes, name changes.
-            // If format is same, maybe "filename_compressed.ext".
-            const namePart = fileName.replace(/\.[^/.]+$/, "");
-            newFileName = `${namePart}_compressed${originalExt}`;
+            newFileName = fileName;
 
             outputTempPath = path.join(tempDir, `proc_${Date.now()}_${newFileName}`);
             tempFiles.push(outputTempPath);
