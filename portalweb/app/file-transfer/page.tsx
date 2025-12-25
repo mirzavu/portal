@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Paperclip, Send, Trash2, Plus, Download, File, MessageSquare, X, Link, Check } from 'lucide-react';
+import { Paperclip, Send, Trash2, Plus, Download, File, MessageSquare, X, Link, Check, Minimize2, Loader2, FileImage, FileVideo } from 'lucide-react';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 interface Thread {
@@ -43,6 +43,7 @@ export default function FileTransferPage() {
   const [messageText, setMessageText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [compressingFile, setCompressingFile] = useState<string | null>(null);
   const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -346,6 +347,32 @@ export default function FileTransferPage() {
     }
   };
 
+  const handleCompress = async (messageId: string, fileName: string, action: 'compress_image_jpeg' | 'compress_image_original' | 'compress_video', uniqueKey: string) => {
+    try {
+      setCompressingFile(uniqueKey);
+      const response = await fetch(`/api/file-transfer/messages/${messageId}/compress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, fileName }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Compression failed');
+      }
+
+      await fetchMessages(selectedThreadId!);
+
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setCompressingFile(null);
+    }
+  };
+
+  const isImage = (fileName: string) => /\.(jpg|jpeg|png|webp)$/i.test(fileName);
+  const isVideo = (fileName: string) => /\.(mp4|mov|avi|webm|mkv)$/i.test(fileName);
+
   const formatFileSize = (bytes?: number) => {
     if (!bytes) return '';
     if (bytes < 1024) return `${bytes} B`;
@@ -529,6 +556,39 @@ export default function FileTransferPage() {
                                       >
                                         {isCopied ? <Check className="w-4 h-4 text-green-500" /> : <Link className="w-4 h-4" />}
                                       </button>
+
+                                      {/* Compression Controls */}
+                                      {isImage(fileName) && (
+                                        <>
+                                          <button
+                                            onClick={() => handleCompress(message.id, fileName, 'compress_image_jpeg', `${message.id}-${index}`)}
+                                            disabled={compressingFile === `${message.id}-${index}`}
+                                            className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                            title="Compress to JPEG"
+                                          >
+                                            {compressingFile === `${message.id}-${index}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-[10px] font-bold">JPG</span>}
+                                          </button>
+                                          <button
+                                            onClick={() => handleCompress(message.id, fileName, 'compress_image_original', `${message.id}-${index}`)}
+                                            disabled={compressingFile === `${message.id}-${index}`}
+                                            className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                            title="Optimize (Keep Format)"
+                                          >
+                                            {compressingFile === `${message.id}-${index}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Minimize2 className="w-4 h-4" />}
+                                          </button>
+                                        </>
+                                      )}
+                                      {isVideo(fileName) && (
+                                        <button
+                                          onClick={() => handleCompress(message.id, fileName, 'compress_video', `${message.id}-${index}`)}
+                                          disabled={compressingFile === `${message.id}-${index}`}
+                                          className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                          title="Compress to MP4"
+                                        >
+                                          {compressingFile === `${message.id}-${index}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-[10px] font-bold">MP4</span>}
+                                        </button>
+                                      )}
+
                                       <button
                                         onClick={() => handleDownloadFile(message.id, fileName)}
                                         className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
@@ -560,6 +620,46 @@ export default function FileTransferPage() {
                                   >
                                     {copiedStates[`${message.id}-single`] ? <Check className="w-4 h-4 text-green-500" /> : <Link className="w-4 h-4" />}
                                   </button>
+
+                                  {(() => {
+                                    const fileName = Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download');
+                                    const uniqueKey = `${message.id}-single`;
+                                    return (
+                                      <>
+                                        {isImage(fileName) && (
+                                          <>
+                                            <button
+                                              onClick={() => handleCompress(message.id, fileName, 'compress_image_jpeg', uniqueKey)}
+                                              disabled={compressingFile === uniqueKey}
+                                              className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                              title="Compress to JPEG"
+                                            >
+                                              {compressingFile === uniqueKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-[10px] font-bold">JPG</span>}
+                                            </button>
+                                            <button
+                                              onClick={() => handleCompress(message.id, fileName, 'compress_image_original', uniqueKey)}
+                                              disabled={compressingFile === uniqueKey}
+                                              className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                              title="Optimize (Keep Format)"
+                                            >
+                                              {compressingFile === uniqueKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <Minimize2 className="w-4 h-4" />}
+                                            </button>
+                                          </>
+                                        )}
+                                        {isVideo(fileName) && (
+                                          <button
+                                            onClick={() => handleCompress(message.id, fileName, 'compress_video', uniqueKey)}
+                                            disabled={compressingFile === uniqueKey}
+                                            className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
+                                            title="Compress to MP4"
+                                          >
+                                            {compressingFile === uniqueKey ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="text-[10px] font-bold">MP4</span>}
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+
                                   <button
                                     onClick={() => handleDownloadFile(message.id, Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download'))}
                                     className="p-1.5 border border-gray-600 text-gray-400 hover:border-blood hover:text-blood transition-all"
