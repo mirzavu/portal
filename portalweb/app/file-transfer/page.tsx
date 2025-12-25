@@ -513,7 +513,7 @@ export default function FileTransferPage() {
                                     <div key={index} className="flex items-center gap-2 p-2 bg-gray-800/50 border border-gray-700">
                                       <File className="w-4 h-4 text-gray-400" />
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-gray-300 text-sm font-mono truncate">
+                                        <div className="text-gray-300 text-sm font-mono line-clamp-2 break-all">
                                           {fileName}
                                         </div>
                                         {fileSize && (
@@ -544,7 +544,7 @@ export default function FileTransferPage() {
                                 <div className="flex items-center gap-2 p-2 bg-gray-800/50 border border-gray-700">
                                   <File className="w-4 h-4 text-gray-400" />
                                   <div className="flex-1 min-w-0">
-                                    <div className="text-gray-300 text-sm font-mono truncate">
+                                    <div className="text-gray-300 text-sm font-mono line-clamp-2 break-all">
                                       {Array.isArray(message.file_name) ? message.file_name[0] : (message.file_name || 'download')}
                                     </div>
                                     {message.file_size && (
