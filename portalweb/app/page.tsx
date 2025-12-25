@@ -3,7 +3,7 @@
 // Main dashboard page for security operations
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Shield, Map as MapIcon, Lock, User, Server } from 'lucide-react';
+import { Shield, Map as MapIcon, Lock, User, Server, Paperclip } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 
 interface DashboardStats {
@@ -57,7 +57,7 @@ export default function Home() {
         console.log('[ENV VAR CHECK] Length:', pbUrl?.length);
         console.log('[ENV VAR CHECK] Ends with /:', pbUrl?.endsWith('/'));
         console.log('========================================');
-        
+
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const knocksUrl = `${pbUrl}/api/collections/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`;
         console.log('[DASHBOARD DEBUG] Constructed knocks URL:', knocksUrl);
@@ -66,18 +66,18 @@ export default function Home() {
           path: '/api/collections/door_knocks/records',
           full: knocksUrl
         });
-        
+
         const knocksResponse = await fetch(knocksUrl);
         console.log('[DASHBOARD DEBUG] Knocks response status:', knocksResponse.status);
         console.log('[DASHBOARD DEBUG] Knocks response ok:', knocksResponse.ok);
         console.log('[DASHBOARD DEBUG] Knocks response URL:', knocksResponse.url);
-        
+
         if (!knocksResponse.ok) {
           const errorText = await knocksResponse.text();
           console.error('[DASHBOARD DEBUG] Knocks response error text:', errorText);
           throw new Error(`Failed to fetch knocks: ${knocksResponse.status} ${knocksResponse.statusText}`);
         }
-        
+
         const knocksData = await knocksResponse.json();
         console.log('[DASHBOARD DEBUG] Knocks data received:', knocksData);
 
@@ -261,6 +261,33 @@ export default function Home() {
               </>
             )}
           </div>
+
+          {/* File Transfer Card */}
+          <Link
+            href="/file-transfer"
+            className="group relative bg-charcoal/50 border border-gray-800 p-8 hover:border-indigo-500 transition-all duration-300"
+          >
+            <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-indigo-500"></div>
+            <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-indigo-500"></div>
+            <div className="flex items-start justify-between mb-6">
+              <div className="p-3 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.5)]">
+                <Paperclip className="w-8 h-8 text-white" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold mb-4 text-gray-200 font-serif">
+              File Transfer
+            </h2>
+            <div className="text-5xl font-bold text-indigo-400 mb-3 font-mono">
+              SECURE
+            </div>
+            <div className="text-sm text-gray-400 mb-4 font-mono">
+              Encrypted p2p file sharing
+            </div>
+            <div className="flex items-center text-gold text-sm font-semibold group-hover:translate-x-1 transition-transform font-mono uppercase">
+              <span>Transfer files</span>
+              <span className="ml-2">→</span>
+            </div>
+          </Link>
         </div>
       )}
 
@@ -291,19 +318,16 @@ export default function Home() {
             {stats.pm2Status.processes.map((proc) => (
               <div
                 key={proc.id}
-                className={`group relative bg-charcoal/50 border p-6 transition-all duration-300 ${
-                  proc.status === 'online'
-                    ? 'border-green-500/50 hover:border-green-500'
-                    : 'border-red-500/50 hover:border-red-500'
-                }`}
+                className={`group relative bg-charcoal/50 border p-6 transition-all duration-300 ${proc.status === 'online'
+                  ? 'border-green-500/50 hover:border-green-500'
+                  : 'border-red-500/50 hover:border-red-500'
+                  }`}
               >
-                <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 ${
-                  proc.status === 'online' ? 'border-green-500' : 'border-red-500'
-                }`}></div>
-                <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 ${
-                  proc.status === 'online' ? 'border-green-500' : 'border-red-500'
-                }`}></div>
-                
+                <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 ${proc.status === 'online' ? 'border-green-500' : 'border-red-500'
+                  }`}></div>
+                <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 ${proc.status === 'online' ? 'border-green-500' : 'border-red-500'
+                  }`}></div>
+
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <h3 className="text-lg font-bold text-white font-serif mb-1">
@@ -311,11 +335,10 @@ export default function Home() {
                     </h3>
                     <p className="text-xs text-gray-400 font-mono">ID: {proc.id}</p>
                   </div>
-                  <div className={`px-3 py-1 rounded text-xs font-mono font-semibold ${
-                    proc.status === 'online'
-                      ? 'bg-green-500/20 text-green-400 border border-green-500/50'
-                      : 'bg-red-500/20 text-red-400 border border-red-500/50'
-                  }`}>
+                  <div className={`px-3 py-1 rounded text-xs font-mono font-semibold ${proc.status === 'online'
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/50'
+                    : 'bg-red-500/20 text-red-400 border border-red-500/50'
+                    }`}>
                     {proc.status.toUpperCase()}
                   </div>
                 </div>

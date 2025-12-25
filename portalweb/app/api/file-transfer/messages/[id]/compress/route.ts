@@ -11,8 +11,10 @@ import { Readable } from 'stream';
 
 // Helper to download file
 async function downloadFile(url: string, destPath: string) {
+    console.log('[DEBUG] downloadFile fetching:', url);
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
+    console.log('[DEBUG] downloadFile status:', res.status, res.statusText);
+    if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText} (Status: ${res.status})`);
     if (!res.body) throw new Error('No body in response');
 
     // @ts-ignore
@@ -81,8 +83,11 @@ export async function POST(
         const originalTempPath = path.join(tempDir, `orig_${Date.now()}_${fileName}`);
         tempFiles.push(originalTempPath);
 
+        // Get the correct file reference from PocketBase (the actual stored filename)
+        const fileRef = Array.isArray(record.file) ? record.file[fileIndex] : record.file;
+
         // Download original file
-        const fileUrl = pb.files.getUrl(record, fileName);
+        const fileUrl = pb.files.getURL(record, fileRef);
         await downloadFile(fileUrl, originalTempPath);
 
         let outputTempPath = '';
@@ -95,7 +100,9 @@ export async function POST(
             tempFiles.push(outputTempPath);
             newMimeType = 'image/jpeg';
 
+            // .rotate() with no args uses EXIF orientation to auto-rotate
             await sharp(originalTempPath)
+                .rotate()
                 .jpeg({ quality: 80, mozjpeg: true })
                 .toFile(outputTempPath);
 
@@ -117,7 +124,9 @@ export async function POST(
             newMimeType = fileTypes[fileIndex] || 'image/png'; // Fallback
 
             // Sharp processing based on extension
-            const instance = sharp(originalTempPath);
+            // .rotate() with no args uses EXIF orientation to auto-rotate
+            const instance = sharp(originalTempPath).rotate();
+
             if (originalExt.toLowerCase() === '.png') {
                 await instance.png({ quality: 80, compressionLevel: 9 }).toFile(outputTempPath);
             } else if (['.jpg', '.jpeg'].includes(originalExt.toLowerCase())) {
@@ -139,9 +148,9 @@ export async function POST(
                 ffmpeg(originalTempPath)
                     .output(outputTempPath)
                     .videoCodec('libx264')
-                    .size('?x720') // Downcale to 720p if larger? Or just maintain aspect ratio. User said "without quality loss if possible, slight loss fine". 
-                    // Let's just set CRF and Preset.
-                    .addOptions(['-crf 28', '-preset fast'])
+                    // CRF 23 is default for x264, good balance. Lower is better quality.
+                    // Preset medium is default, good balance of speed/compression.
+                    .addOptions(['-crf 23', '-preset medium'])
                     .on('end', resolve)
                     .on('error', reject)
                     .run();
@@ -153,16 +162,31 @@ export async function POST(
         const newStats = fs.statSync(outputTempPath);
         const newSize = newStats.size;
 
-        // Update PB
-        const formData = new FormData();
+        // Update PB using "Replace on Disk" strategy for stability
+        // This avoids complications with PocketBase file field replacement in FormData
+        const storageDir = path.join(process.cwd(), 'pb_data', 'storage', record.collectionId, messageId);
+        const storagePath = path.join(storageDir, fileRef);
 
-        // remove valid old file
-        formData.append('file-', fileName);
+        console.log('[DEBUG] Replacing file on disk:', storagePath);
 
-        // add new file
-        const fileBuffer = fs.readFileSync(outputTempPath);
-        const fileBlob = new Blob([fileBuffer], { type: newMimeType });
-        formData.append('file', fileBlob, newFileName);
+        // Ensure storage directory exists (it should, but just in case)
+        if (!fs.existsSync(storageDir)) {
+            console.warn('[DEBUG] Storage directory not found, creating:', storageDir);
+            fs.mkdirSync(storageDir, { recursive: true });
+        }
+
+        // Overwrite the original stored file with compressed content
+        fs.copyFileSync(outputTempPath, storagePath);
+
+        // Delete any existing thumbnails for this file to force regeneration
+        const thumbDir = path.join(storageDir, `thumbs_${fileRef}`);
+        if (fs.existsSync(thumbDir)) {
+            try {
+                fs.rmSync(thumbDir, { recursive: true, force: true });
+            } catch (e) {
+                console.warn('[DEBUG] Failed to delete thumbnails:', e);
+            }
+        }
 
         // Update metadata arrays
         if (fileIndex !== -1) {
@@ -171,25 +195,15 @@ export async function POST(
             fileTypes[fileIndex] = newMimeType;
         }
 
-        // Reconstruct metadata fields
-        // file_name
-        formData.append('file_name', JSON.stringify(fileNames));
+        // Update PB record via JSON (PATCH) - this updates metadata only
+        const updateData: any = {
+            file_name: JSON.stringify(fileNames),
+            file_type: JSON.stringify(fileTypes.map((type, i) => ({ type, size: fileSizes[i] }))),
+            file_size: fileSizes.reduce((a, b) => a + b, 0),
+            updated: new Date().toISOString()
+        };
 
-        // file_size (total)
-        const totalSize = fileSizes.reduce((a, b) => a + b, 0);
-        formData.append('file_size', totalSize.toString());
-
-        // file_type (complex object array)
-        const newFileTypeMeta = fileTypes.map((t, i) => ({
-            type: t,
-            size: fileSizes[i]
-        }));
-        formData.append('file_type', JSON.stringify(newFileTypeMeta));
-
-        // Update modified timestamp
-        formData.append('updated', new Date().toISOString());
-
-        const updatedRecord = await pb.collection('file_transfer_messages').update(messageId, formData);
+        const updatedRecord = await pb.collection('file_transfer_messages').update(messageId, updateData);
 
         return NextResponse.json(updatedRecord);
 
