@@ -3,8 +3,9 @@
 // Main dashboard page for security operations
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Shield, Map as MapIcon, Lock, User, Server, Paperclip } from 'lucide-react';
+import { Shield, Map as MapIcon, Lock, User, Server, Paperclip, Activity } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import PresenceChart from '@/components/PresenceChart';
 
 interface DashboardStats {
   recentKnocks: number;
@@ -20,6 +21,7 @@ interface DashboardStats {
     battery_percent: number;
     timestamp: string;
   } | null;
+  presenceHistory: any[]; // Add history data type
   pm2Status: {
     processes: Array<{
       id: number;
@@ -41,6 +43,7 @@ export default function Home() {
     recentKnocks: 0,
     bikeStatus: null,
     presenceData: null,
+    presenceHistory: [],
     pm2Status: null,
   });
   const [loading, setLoading] = useState(true);
@@ -48,38 +51,12 @@ export default function Home() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        // Fetch recent knocks count (last 24 hours)
+        // Fetch recent knocks count
         const pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8095';
-        console.log('========================================');
-        console.log('[ENV VAR CHECK] NEXT_PUBLIC_POCKETBASE_URL value:', pbUrl);
-        console.log('[ENV VAR CHECK] Raw process.env.NEXT_PUBLIC_POCKETBASE_URL:', process.env.NEXT_PUBLIC_POCKETBASE_URL);
-        console.log('[ENV VAR CHECK] Type:', typeof pbUrl);
-        console.log('[ENV VAR CHECK] Length:', pbUrl?.length);
-        console.log('[ENV VAR CHECK] Ends with /:', pbUrl?.endsWith('/'));
-        console.log('========================================');
-
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const knocksUrl = `${pbUrl}/api/collections/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`;
-        console.log('[DASHBOARD DEBUG] Constructed knocks URL:', knocksUrl);
-        console.log('[DASHBOARD DEBUG] Full URL breakdown:', {
-          base: pbUrl,
-          path: '/api/collections/door_knocks/records',
-          full: knocksUrl
-        });
-
         const knocksResponse = await fetch(knocksUrl);
-        console.log('[DASHBOARD DEBUG] Knocks response status:', knocksResponse.status);
-        console.log('[DASHBOARD DEBUG] Knocks response ok:', knocksResponse.ok);
-        console.log('[DASHBOARD DEBUG] Knocks response URL:', knocksResponse.url);
-
-        if (!knocksResponse.ok) {
-          const errorText = await knocksResponse.text();
-          console.error('[DASHBOARD DEBUG] Knocks response error text:', errorText);
-          throw new Error(`Failed to fetch knocks: ${knocksResponse.status} ${knocksResponse.statusText}`);
-        }
-
         const knocksData = await knocksResponse.json();
-        console.log('[DASHBOARD DEBUG] Knocks data received:', knocksData);
 
         // Fetch bike status
         const bikeResponse = await fetch('/api/bike/status');
@@ -89,6 +66,10 @@ export default function Home() {
         const presenceResponse = await fetch('/api/presence/latest');
         const presenceData = await presenceResponse.json();
 
+        // Fetch presence history for chart
+        const historyResponse = await fetch('/api/presence/history');
+        const historyData = await historyResponse.json();
+
         // Fetch PM2 status
         const pm2Response = await fetch('/api/pm2/status');
         const pm2Data = await pm2Response.json();
@@ -97,22 +78,18 @@ export default function Home() {
           recentKnocks: knocksData.totalItems || 0,
           bikeStatus: bikeData,
           presenceData: presenceData.presence !== null ? presenceData : null,
+          presenceHistory: Array.isArray(historyData) ? historyData : [],
           pm2Status: pm2Data,
         });
       } catch (err) {
         console.error('[DASHBOARD DEBUG] Error fetching dashboard data:', err);
-        console.error('[DASHBOARD DEBUG] Error details:', {
-          message: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-          name: err instanceof Error ? err.name : undefined
-        });
       } finally {
         setLoading(false);
       }
     };
 
     fetchDashboardData();
-    const interval = setInterval(fetchDashboardData, 8000); // 8 seconds for faster updates
+    const interval = setInterval(fetchDashboardData, 8000);
     return () => clearInterval(interval);
   }, []);
 
@@ -290,6 +267,22 @@ export default function Home() {
           </Link>
         </div>
       )}
+
+      {/* Presence History Section */}
+      <div className="mt-12">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="p-2 bg-gradient-to-br from-cyan-500 to-cyan-700 rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.5)]">
+            <Activity className="w-6 h-6 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold text-white font-serif">
+            Activity Log (Last Hour)
+          </h2>
+        </div>
+
+        <div className="bg-charcoal/50 border border-gray-800 p-6 rounded-lg">
+          <PresenceChart data={stats.presenceHistory} />
+        </div>
+      </div>
 
       {/* PM2 Processes Section */}
       <div className="mt-12">
