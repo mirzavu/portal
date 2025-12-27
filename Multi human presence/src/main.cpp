@@ -20,7 +20,7 @@
  #define PIN_LED          2    // Onboard LED
  
  // --- Configuration ---
- #define SLEEP_SECONDS    15   // Sleep duration
+ #define SLEEP_SECONDS    180   // Sleep duration
  #define RADAR_BAUD       256000 
  #define WARMUP_MS        2000 // Increased to 2.0s for stability
  #define DIVIDER_RATIO    2.0  // 100k/100k
@@ -289,6 +289,7 @@ float readBattery() {
    esp_now_send(gatewayAddress, (uint8_t *)&msg, sizeof(msg));
    
    Serial.println("Done.");
+   Serial.flush();
    
    // Clean up ESP-NOW
    esp_now_deinit();

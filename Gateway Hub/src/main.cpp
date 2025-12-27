@@ -44,6 +44,7 @@ unsigned long lastLowBatteryAlert = 0;
 unsigned long lastDailyBatteryReport = 0;
 unsigned long lastPushNotification = 0; // Global cooldown tracker
 int lastKnockID = 0;
+unsigned long lastPresenceTime = 0; // Track last presence packet time for deduplication
 unsigned long packetCounter = 0;
 
 const unsigned long PUSH_COOLDOWN_MS = 5000; // 5 second cooldown between ANY push notifications
@@ -71,11 +72,17 @@ void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
     }
   } else if (len == sizeof(PresenceMessage)) {
     if (xSemaphoreTake(pktMutex, 10 / portTICK_PERIOD_MS) == pdTRUE) {
-      memcpy(&pkt.presence, data, sizeof(PresenceMessage));
-      packetType = 2; // Presence message
-      newPacket = true;
+      // Deduplication: Ignore if received within 500ms of last packet
+      if (millis() - lastPresenceTime > 500) {
+        memcpy(&pkt.presence, data, sizeof(PresenceMessage));
+        packetType = 2; // Presence message
+        newPacket = true;
+        lastPresenceTime = millis();
+        Serial.println("✓ Presence packet queued for processing");
+      } else {
+        Serial.println("⚠️  IGNORED: Duplicate presence packet (< 500ms)");
+      }
       xSemaphoreGive(pktMutex);
-      Serial.println("✓ Presence packet queued for processing");
     } else {
       Serial.println("⚠️  Mutex timeout - packet dropped!");
     }
@@ -270,6 +277,7 @@ void loop() {
       }
       
       Serial.println("========================================\n");
+    }
     // Handle Presence Messages
     else if (currentPacketType == 2) {
       PresenceMessage local;
@@ -346,7 +354,8 @@ void sendDoorKnockAPI(String macAddress) {
   Serial.print("Calling Door Knock API... ");
   
   // TESTING: Replace with your laptop's IP address
-  if (!http.begin(client, "http://192.168.29.15:8080/api/door-knock")) { // Change IP to your laptop!
+  // TESTING: Replace with your laptop's IP address
+  if (!http.begin(client, "http://192.168.29.174:3005/api/door-knock")) { // Change IP to your laptop!
     Serial.println("FAILED to begin HTTP");
     return;
   }
@@ -377,6 +386,33 @@ void sendDoorKnockAPI(String macAddress) {
   }
   
   http.end();
+
+  // --- PRODUCTION API CALL ---
+  WiFiClientSecure clientProd;
+  clientProd.setInsecure(); // Skip certificate validation
+  HTTPClient httpProd;
+
+  Serial.print("Calling Production Door Knock API... ");
+  
+  if (!httpProd.begin(clientProd, "https://portal.demotesting.co.uk/api/door-knock")) {
+    Serial.println("FAILED to begin HTTPS");
+    return;
+  }
+  
+  httpProd.addHeader("Content-Type", "application/json");
+
+  // Reuse same jsonBody
+  int httpCodeProd = httpProd.POST(jsonBody);
+  
+  if (httpCodeProd > 0) {
+    Serial.printf("Prod API Response Code: %d\n", httpCodeProd);
+    String response = httpProd.getString();
+    Serial.println("Response: " + response);
+  } else {
+    Serial.printf("Prod API FAILED (Error: %d)\n", httpCodeProd);
+  }
+  
+  httpProd.end();
 }
 
 String urlEncode(String s) {
@@ -411,7 +447,8 @@ void sendPresenceAPI(bool presence, int16_t distance, float voltage) {
   Serial.print("Calling Presence API... ");
   
   // TESTING: Replace with your laptop's IP address
-  if (!http.begin(client, "http://192.168.29.15:8080/api/presence")) { // Change IP to your laptop!
+  // TESTING: Replace with your laptop's IP address
+  if (!http.begin(client, "http://192.168.29.174:3005/api/presence")) { // Change IP to your laptop!
     Serial.println("FAILED to begin HTTP");
     return;
   }
@@ -439,6 +476,33 @@ void sendPresenceAPI(bool presence, int16_t distance, float voltage) {
   }
   
   http.end();
+
+  // --- PRODUCTION API CALL ---
+  WiFiClientSecure clientProd;
+  clientProd.setInsecure(); // Skip certificate validation
+  HTTPClient httpProd;
+
+  Serial.print("Calling Production Presence API... ");
+  
+  if (!httpProd.begin(clientProd, "https://portal.demotesting.co.uk/api/presence")) {
+    Serial.println("FAILED to begin HTTPS");
+    return;
+  }
+  
+  httpProd.addHeader("Content-Type", "application/json");
+
+  // Reuse same jsonBody
+  int httpCodeProd = httpProd.POST(jsonBody);
+  
+  if (httpCodeProd > 0) {
+    Serial.printf("Prod API Response Code: %d\n", httpCodeProd);
+    String response = httpProd.getString();
+    Serial.println("Response: " + response);
+  } else {
+    Serial.printf("Prod API FAILED (Error: %d)\n", httpCodeProd);
+  }
+  
+  httpProd.end();
 }
 
 void sendPushover(String message, String title, int priority, String sound) {

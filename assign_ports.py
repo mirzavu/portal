@@ -30,6 +30,7 @@ HUMAN_PRESENCE_INI = os.path.join(PROJECT_ROOT, "Multi human presence", "platfor
 
 GATEWAY_MONITOR = os.path.join(PROJECT_ROOT, "Gateway Hub", "monitor_background.py")
 DOOR_MONITOR = os.path.join(PROJECT_ROOT, "Door knock", "monitor_background.py")
+BIKE_MONITOR = os.path.join(PROJECT_ROOT, "Bike GPS", "monitor_background.py")
 HUMAN_PRESENCE_MONITOR = os.path.join(PROJECT_ROOT, "Multi human presence", "monitor_background.py")
 
 # MAC address to project mapping (edit as needed)
@@ -87,7 +88,7 @@ def get_mac_address(port: str) -> Optional[str]:
             ["python3", ESPTOOL_PATH, "--port", port, "chip_id"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=20
         )
         # Parse MAC from output (format: "MAC: XX:XX:XX:XX:XX:XX")
         mac_match = re.search(
@@ -123,10 +124,6 @@ def decide_roles(ports: List[str]) -> Dict[str, str]:
             print(f"  {port} -> Could not read MAC address (may not be ESP32/ESP8266)")
             ports_without_mac.append(port)
     
-    # If Door Knock not identified by MAC and we have ports without MAC, assign the first one
-    if "DOOR" not in result and ports_without_mac:
-        result["DOOR"] = ports_without_mac[0]
-        print(f"  Assigned {ports_without_mac[0]} -> DOOR (no MAC read, fallback)")
     
     return result
 
@@ -156,7 +153,7 @@ def replace_ini_ports(ini_path: str, new_port: str) -> None:
     if new_content != content:
         with open(ini_path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        print(f"Updated ports in: {ini_path} -> {new_port}")
+
 
 
 def replace_monitor_port(monitor_path: str, new_port: str) -> None:
@@ -176,7 +173,7 @@ def replace_monitor_port(monitor_path: str, new_port: str) -> None:
     if new_content != content:
         with open(monitor_path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        print(f"Updated PORT in: {monitor_path} -> {new_port}")
+
 
 
 def main() -> None:
@@ -209,6 +206,7 @@ def main() -> None:
 
     if "BIKE" in project_to_port:
         replace_ini_ports(BIKE_INI, project_to_port["BIKE"])
+        replace_monitor_port(BIKE_MONITOR, project_to_port["BIKE"])
     else:
         print("Warning: Bike GPS port not identified.", file=sys.stderr)
 
