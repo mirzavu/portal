@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3005:3000"
+    env_file:
+      - .env.production
+    environment:
+      - PORT=3000
+      - POCKETBASE_URL=http://pocketbase:8090
+    depends_on:
+      - pocketbase
+
+  pocketbase:
+    build:
+      context: .
+      dockerfile: Dockerfile.pocketbase
+    restart: always
+    ports:
+      - "8095:8090"
+    volumes:
+      - ./pb_data:/pb/pb_data
+      - ./pb_migrations:/pb/pb_migrations
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3

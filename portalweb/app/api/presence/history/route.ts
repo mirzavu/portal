@@ -20,11 +20,7 @@ export async function GET(request: NextRequest) {
         console.log('[API DEBUG] Filter Time:', filterTime);
 
         const records = await pb.collection('presence_data').getList(1, 1000, {
-            // Start fetching recent items. Sort is default reverse created usually? 
-            // We want oldest first for the chart, but 'sort' param might be causing issues too?
-            // Let's strip it all and sort/filter in JS.
-            // filter: `created >= "${filterTime}"`,
-            // sort: '-created', // Newest first (default)
+            sort: '-timestamp', // Get newest records first
             requestKey: null, // Disable auto-cancellation
         });
 
@@ -57,7 +53,7 @@ export async function GET(request: NextRequest) {
         // Downsampling logic: 1 point per ~5 minutes
         const downsampledData: any[] = [];
         let lastBucketTime = 0;
-        const bucketSize = 5 * 60 * 1000; // 5 minutes in ms
+        const bucketSize = 60 * 1000; // 1 minute in ms (higher resolution for last hour)
 
         // Process records
         items.forEach((record) => {
@@ -74,7 +70,8 @@ export async function GET(request: NextRequest) {
                     timestamp: t, // Use the actual timestamp field
                     distance: record.distance,
                     presence: record.presence,
-                    voltage: record.voltage
+                    voltage: record.voltage,
+                    moving_energy: record.moving_energy || 0
                 });
                 lastBucketTime = recordTime;
             }

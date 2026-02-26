@@ -29,6 +29,7 @@ export const presenceDataSchema = z.object({
   presence: z.boolean(),
   distance: z.number().int().min(-1, 'Distance must be -1 or positive'),
   voltage: z.number().positive('Voltage must be positive'),
+  moving_energy: z.number().int().min(0).max(100).optional(),
 });
 
 // Query parameters for door knocks

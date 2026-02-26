@@ -24,16 +24,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Hardware threshold: 30cm or less is treated as "no presence"
+    let finalPresence = validated.presence;
+    let finalDistance = validated.distance;
+
+    if (finalDistance > 0 && finalDistance <= 30) {
+      console.log(`[PRESENCE API] Distance ${finalDistance}cm <= 30cm threshold. Overriding presence to false.`);
+      finalPresence = false;
+      finalDistance = -1; // Standard "no presence" distance
+    }
+
     // Create record in PocketBase (timestamp generated server-side)
-    // NOTE: Passing boolean false or number 0/-1 triggers "Cannot be blank" validation error in PocketBase
-    // if the field is Required. Passing as strings bypasses this while preserving value.
-    // NOTE: PocketBase 'presence' field is Required and incorrectly rejects 'false' as blank.
-    // WORKAROUND: We force 'true' for presence. The 'distance' field (-1) serves as the source of truth for 'clear' state.
     const record = await pb.collection('presence_data').create({
-      presence: 'true', // FORCE TRUE to bypass validation
-      distance: String(validated.distance),
+      presence: finalPresence,
+      distance: finalDistance,
       voltage: validated.voltage,
       battery_percent: batteryPercent,
+      moving_energy: validated.moving_energy || 0, // Store energy
       timestamp: new Date().toISOString(),
     });
 

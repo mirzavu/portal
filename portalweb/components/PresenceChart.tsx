@@ -16,6 +16,7 @@ interface ChartData {
     distance: number;
     presence: boolean;
     voltage: number;
+    moving_energy: number; // New field
 }
 
 interface PresenceChartProps {
@@ -30,14 +31,19 @@ const CustomTooltip = ({ active, payload, label }: any) => {
                 <p className="text-gray-300 font-mono text-xs mb-1">
                     {format(new Date(label), 'HH:mm')}
                 </p>
-                <p className="text-cyan-400 font-bold font-mono">
-                    Distance: {data.distance} cm
+                <div className="flex flex-col gap-1">
+                    <p className="text-cyan-400 font-bold font-mono">
+                        Distance: {data.distance} cm
+                    </p>
+                    <p className="text-gold font-bold font-mono">
+                        Energy: {data.moving_energy}%
+                    </p>
+                </div>
+                <p className={`text-xs font-mono mt-2 ${data.distance > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+                    {data.distance > 0 ? 'STATUS: ACTIVE' : 'STATUS: CLEAR'}
                 </p>
-                <p className={`text-xs font-mono mt-1 ${data.distance > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-                    {data.distance > 0 ? 'PRESENCE DETECTED' : 'CLEAR'}
-                </p>
-                <p className="text-xs text-gray-500 font-mono">
-                    Volt: {data.voltage.toFixed(2)}V
+                <p className="text-[10px] text-gray-500 font-mono mt-1">
+                    Bat: {data.voltage.toFixed(2)}V
                 </p>
             </div>
         );
@@ -66,18 +72,39 @@ export default function PresenceChart({ data }: PresenceChartProps) {
                         tick={{ fill: '#888', fontSize: 12, fontFamily: 'monospace' }}
                     />
                     <YAxis
+                        yAxisId="left"
                         stroke="#666"
                         tick={{ fill: '#888', fontSize: 12, fontFamily: 'monospace' }}
                         unit=" cm"
+                        domain={[0, 700]}
+                        allowDataOverflow={true}
+                    />
+                    <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        stroke="#888"
+                        tick={{ fill: '#d4af37', fontSize: 12, fontFamily: 'monospace' }}
+                        domain={[0, 100]}
+                        unit="%"
                     />
                     <Tooltip content={<CustomTooltip />} />
                     <Line
+                        yAxisId="left"
                         type="monotone"
                         dataKey="distance"
                         stroke="#06b6d4" // Cyan-500
                         strokeWidth={2}
                         dot={{ fill: '#06b6d4', r: 3 }}
                         activeDot={{ r: 6, fill: '#fff' }}
+                    />
+                    <Line
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey="moving_energy"
+                        stroke="#d4af37" // Gold
+                        strokeWidth={2}
+                        dot={{ fill: '#d4af37', r: 2 }}
+                        activeDot={{ r: 4, fill: '#fff' }}
                     />
                 </LineChart>
             </ResponsiveContainer>

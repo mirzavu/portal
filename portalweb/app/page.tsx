@@ -52,32 +52,65 @@ export default function Home() {
     const fetchDashboardData = async () => {
       try {
         // Fetch recent knocks count
-        const pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8095';
-        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        const knocksUrl = `${pbUrl}/api/collections/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`;
-        const knocksResponse = await fetch(knocksUrl);
-        const knocksData = await knocksResponse.json();
+        let recentKnocks = 0;
+        try {
+          const pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8095';
+          // Fix: Avoid double /api if pbUrl already contains it (like /api/pb)
+          const baseCollectionsUrl = pbUrl.endsWith('/api/pb')
+            ? `${pbUrl}/collections`
+            : `${pbUrl}/api/collections`;
+
+          const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const knocksUrl = `${baseCollectionsUrl}/door_knocks/records?filter=timestamp >= "${yesterday}"&perPage=1`;
+          const knocksResponse = await fetch(knocksUrl);
+          if (knocksResponse.ok) {
+            const knocksData = await knocksResponse.json();
+            recentKnocks = knocksData.totalItems || 0;
+          }
+        } catch (e) {
+          console.error('[DASHBOARD] Failed to fetch knocks:', e);
+        }
 
         // Fetch bike status
-        const bikeResponse = await fetch('/api/bike/status');
-        const bikeData = await bikeResponse.json();
+        let bikeData = null;
+        try {
+          const bikeResponse = await fetch('/api/bike/status');
+          if (bikeResponse.ok) bikeData = await bikeResponse.json();
+        } catch (e) {
+          console.error('[DASHBOARD] Failed to fetch bike status:', e);
+        }
 
         // Fetch presence data
-        const presenceResponse = await fetch('/api/presence/latest');
-        const presenceData = await presenceResponse.json();
+        let presenceData = null;
+        try {
+          const presenceResponse = await fetch('/api/presence/latest');
+          if (presenceResponse.ok) presenceData = await presenceResponse.json();
+        } catch (e) {
+          console.error('[DASHBOARD] Failed to fetch presence latest:', e);
+        }
 
         // Fetch presence history for chart
-        const historyResponse = await fetch('/api/presence/history');
-        const historyData = await historyResponse.json();
+        let historyData = [];
+        try {
+          const historyResponse = await fetch('/api/presence/history');
+          if (historyResponse.ok) historyData = await historyResponse.json();
+        } catch (e) {
+          console.error('[DASHBOARD] Failed to fetch presence history:', e);
+        }
 
         // Fetch PM2 status
-        const pm2Response = await fetch('/api/pm2/status');
-        const pm2Data = await pm2Response.json();
+        let pm2Data = null;
+        try {
+          const pm2Response = await fetch('/api/pm2/status');
+          if (pm2Response.ok) pm2Data = await pm2Response.json();
+        } catch (e) {
+          console.error('[DASHBOARD] Failed to fetch PM2 status:', e);
+        }
 
         setStats({
-          recentKnocks: knocksData.totalItems || 0,
+          recentKnocks,
           bikeStatus: bikeData,
-          presenceData: presenceData.presence !== null ? presenceData : null,
+          presenceData: (presenceData && presenceData.presence !== null) ? presenceData : null,
           presenceHistory: Array.isArray(historyData) ? historyData : [],
           pm2Status: pm2Data,
         });
@@ -206,8 +239,9 @@ export default function Home() {
             {stats.presenceData ? (
               <>
                 <div className="text-3xl font-bold mb-3 font-mono">
-                  <span className={stats.presenceData.presence ? 'text-cyan-400' : 'text-gray-500'}>
-                    {stats.presenceData.presence ? 'DETECTED' : 'ROOM CLEAR'}
+                  {/* use distance as source of truth since presence is forced to true for PB validation */}
+                  <span className={stats.presenceData.distance > 0 ? 'text-cyan-400' : 'text-gray-500'}>
+                    {stats.presenceData.distance > 0 ? 'DETECTED' : 'ROOM CLEAR'}
                   </span>
                 </div>
                 {stats.presenceData.presence && stats.presenceData.distance > 0 ? (
